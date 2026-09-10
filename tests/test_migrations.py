@@ -497,3 +497,46 @@ async def test_two_summaries_of_one_article_stop_the_upgrade_by_name(tmp_path: P
             ).scalar_one() == 0
     finally:
         await engine.dispose()
+
+
+async def test_an_archive_from_before_the_baselines_amendments_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The stamp is a claim about the file, so it is checked before it is made.
+
+    A database that stopped being opened before ADR 0005's hand amendments still
+    has `runs` - the witness `_has_tables` goes by - and has none of the two
+    model columns, `summaries.editor_importance`, or the three tables that
+    arrived with ADRs 0019 and 0022. Stamped anyway it reaches `0004` and dies
+    on `no such column: r.model_rank`, three revisions away from the mistake and
+    with nothing in the traceback pointing back at it.
+    """
+    engine = await _archive_as_it_was(tmp_path / "archive.db")
+    try:
+        async with engine.begin() as connection:
+            for statement in (
+                "DROP TABLE run_steps",
+                "DROP TABLE verdicts",
+                "DROP TABLE eval_results",
+                "ALTER TABLE runs DROP COLUMN model_rank",
+                "ALTER TABLE runs DROP COLUMN model_summarize",
+                "ALTER TABLE summaries DROP COLUMN editor_importance",
+            ):
+                await connection.execute(text(statement))
+
+        with pytest.raises(RuntimeError) as refused:
+            await init_db(engine)
+
+        # Every missing piece is named, because "it is not the baseline" leaves
+        # the operator with the same inspection to do by hand.
+        message = str(refused.value)
+        for absent in (
+            "run_steps",
+            "runs.model_rank",
+            "runs.model_summarize",
+            "summaries.editor_importance",
+        ):
+            assert absent in message
+        assert await current_revision(engine) is None
+    finally:
+        await engine.dispose()
