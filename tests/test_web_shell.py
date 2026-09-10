@@ -721,6 +721,28 @@ def test_the_why_plate_is_never_the_surface_it_is_inset_into(client: TestClient)
     assert plate[1] != panel[1], "the plate vanishes into the card in the dark theme"
 
 
+def test_a_stylesheet_is_revalidated_rather_than_assumed_fresh(client: TestClient) -> None:
+    """The failure is silent on the server and total on the screen.
+
+    `/static/theme.css` keeps one URL for the life of the project, and a
+    response carrying an ETag and no `Cache-Control` lets the browser invent a
+    freshness window out of the file's age - a tenth of it, by the usual
+    heuristic. A container that had served the same stylesheet for five days
+    bought about twelve hours of that, so a reader arriving after the next
+    deploy drew today's markup with the previous stylesheet: none of the class
+    names the shell is built on matched, and the request that would have shown
+    it was never sent.
+    """
+    for asset in ("/static/theme.css", "/static/fonts.css"):
+        response = client.get(asset)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache"
+        # `no-cache` keeps the copy and requires the conditional request. It is
+        # only cheap because that request has an answer: without the ETag every
+        # page view is a fresh download of the whole stylesheet.
+        assert response.headers["etag"]
+
+
 # -- the two dictionaries ------------------------------------------------------
 
 
