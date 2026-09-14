@@ -46,6 +46,10 @@ dev = [
     "pre-commit>=4.0",
     "respx>=0.22",
     "httpx>=0.28",
+    # The Stop-gate runs this suite on every code-changing turn: 91s serial,
+    # 31s with `-n auto` for the same tests (measured 2026-09-14). A gate that
+    # costs a minute and a half per turn is a gate that gets switched off.
+    "pytest-xdist>=3.6",
 ]
 # Screenshots only. Kept out of `dev` so a clone that just wants to run the
 # tests does not download a browser.
