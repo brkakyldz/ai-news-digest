@@ -514,7 +514,7 @@ def test_H18_R10_additive_migration_preserves_seeded_legacy_demo_history(demo):
         db.execute("ALTER TABLE bulletins DROP COLUMN bilingual")
         db.execute("ALTER TABLE bulletins DROP COLUMN editor_note_tr")
         db.execute("ALTER TABLE bulletin_items DROP COLUMN reason_tr")
-        db.execute("UPDATE alembic_version SET version_num = '0008'")
+        db.execute("UPDATE alembic_version SET version_num = '0008_published_checks'")
         db.commit()
     upgraded = run_cli(root, db_path, "sources", env=environment(root, db_path))
     assert upgraded.returncode == 0, f"schema upgrade failed: {upgraded.stdout}\n{upgraded.stderr}"
