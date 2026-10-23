@@ -1,11 +1,9 @@
 """The strict xfails, counted and named in one place.
 
-There are fourteen, and finding 16 of the 2026-09-08 audit called them "permanent
-fixtures instead of tracked issues". They are not permanent — `strict=True` is
-what makes them temporary, because the day a gap closes the mark fails loudly
-rather than passing silently — but the audit's real complaint stands: nothing
-outside the two files that declare them said how many there were or what they
-were waiting on. A gap nobody counts is a gap nobody closes.
+There are fourteen: eleven dedupe pairs and three checks the recorded fixtures
+predate. `strict=True` makes each mark temporary, because the day a gap closes
+the test fails loudly rather than passing silently. A gap nobody counts is a
+gap nobody closes.
 
 This is the count. It fails when a gap is added without a reason, and it fails
 when the total changes, so adding or closing one is a deliberate edit here with
@@ -22,11 +20,10 @@ The two sources:
   name apart, and one subject apart. Counted separately because they wait on the
   same embedding for the opposite reason - the recall gaps are merges that do
   not happen, these are merges that should not.
-- `test_quality_checks.py::KNOWN_GAPS` — five checks the two recorded fixtures
-  cannot meet because each was recorded before the fix that check exists for.
-  Both predate `key_fact` (PLAN-V2 5.6), and the 2026-09-04 one predates three
-  more. They come off when a newer run is recorded, which is a fact about those
-  files rather than about the code.
+- `test_quality_checks.py::KNOWN_GAPS` — three checks the two recorded fixtures
+  cannot meet because both predate `key_fact` and the 2026-09-04 fixture also
+  predates the numeral grounding check. They come off when newer runs are
+  recorded, which is a fact about those files rather than about the code.
 """
 
 from __future__ import annotations
@@ -36,7 +33,7 @@ from __future__ import annotations
 EXPECTED = {
     "golden pairs that should merge and cannot (E5 trigger)": 9,
     "golden pairs that should not merge and do (E5 trigger)": 2,
-    "checks the recorded fixtures predate": 5,
+    "checks the recorded fixtures predate": 3,
 }
 
 
@@ -59,7 +56,7 @@ def test_the_known_gaps_are_the_number_we_think_they_are() -> None:
     assert missed == EXPECTED["golden pairs that should merge and cannot (E5 trigger)"]
     assert wrong == EXPECTED["golden pairs that should not merge and do (E5 trigger)"]
     assert predated == EXPECTED["checks the recorded fixtures predate"]
-    assert missed + wrong + predated == sum(EXPECTED.values()) == 16
+    assert missed + wrong + predated == sum(EXPECTED.values()) == 14
 
 
 def test_every_known_gap_states_what_it_is_waiting_on() -> None:
