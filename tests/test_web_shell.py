@@ -187,7 +187,7 @@ def test_the_question_carries_the_output_language_and_starts_on_the_pages(
     assert 'aria-current="true"' in asked
     assert "out=tr" in asked and "out=en" in asked
     assert (
-        'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms=gpt-5.6-luna&amp;mr=gpt-5.6-luna"' in asked
+        'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms=gpt-6-luna&amp;mr=gpt-6-luna"' in asked
     ), "it starts on the page's language and the configured models"
 
     # Choosing the other slot is the same swap the question itself is: a GET of

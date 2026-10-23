@@ -33,6 +33,7 @@ from ainews.pipeline.pricing import (
 from ainews.web.app import create_app
 
 LUNA = "gpt-5.6-luna"
+GPT6_LUNA = "gpt-6-luna"
 TERRA = "gpt-5.6-terra"
 
 
@@ -44,12 +45,24 @@ def test_the_menu_is_cheapest_first() -> None:
     the fifty-times-dearer one has to be a reach rather than a neighbour."""
     options = model_options()
     assert [choice.id for choice in options] == list(MODEL_NAMES)
-    assert options[0].id == LUNA
+    assert options[0].id == GPT6_LUNA
     assert [o.price_in for o in options] == sorted(o.price_in for o in options)
 
 
 def test_a_slot_is_labelled_by_the_part_of_the_id_that_differs() -> None:
-    assert [choice.short for choice in model_options()] == ["luna", "terra", "sol", "astra"]
+    assert [choice.short for choice in model_options()] == [
+        "6 luna",
+        "5.6 luna",
+        "terra",
+        "sol",
+        "astra",
+    ]
+
+
+def test_the_two_luna_tiers_have_distinct_labels() -> None:
+    labels = {choice.id: choice.short for choice in model_options()}
+    assert labels[GPT6_LUNA] == "6 luna"
+    assert labels[LUNA] == "5.6 luna"
 
 
 def test_a_configured_model_the_table_has_not_heard_of_is_still_drawn() -> None:
@@ -84,7 +97,9 @@ def test_the_question_offers_both_models_and_marks_the_configured_ones(
     assert "Özet modeli" in asked and "Sıralama modeli" in asked
     for name in MODEL_NAMES:
         assert f"ms={name}" in asked and f"mr={name}" in asked
-    assert f'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms={LUNA}&amp;mr={LUNA}"' in asked
+    assert (
+        f'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms={GPT6_LUNA}&amp;mr={GPT6_LUNA}"' in asked
+    )
 
 
 def test_the_prices_are_on_the_question_before_the_press(
@@ -93,10 +108,10 @@ def test_the_prices_are_on_the_question_before_the_press(
     """The screen where a reader can pick a tier costing fifty times as much is
     the screen that has to say so. $0.04 of judge calls arriving unannounced in a
     billing dashboard on 2026-09-06 is what this line is for."""
-    assert "1M token: özet $0.20/$1.20 · sıralama $0.20/$1.20" in client.get("/runs/confirm").text
+    assert "1M token: özet $0.10/$0.50 · sıralama $0.10/$0.50" in client.get("/runs/confirm").text
 
     dearer = client.get(f"/runs/confirm?ms={TERRA}").text
-    assert "özet $2.00/$12.00 · sıralama $0.20/$1.20" in dearer, "the summariser moved, not both"
+    assert "özet $2.00/$12.00 · sıralama $0.10/$0.50" in dearer, "the summariser moved, not both"
 
 
 def test_choosing_a_model_keeps_the_language_already_chosen(
@@ -106,13 +121,13 @@ def test_choosing_a_model_keeps_the_language_already_chosen(
     neighbour would quietly undo a choice the reader had already made - and the
     only evidence would be the bulletin arriving in the wrong language."""
     body = client.get(f"/runs/confirm?lang=tr&out=en&ms={TERRA}").text
-    assert f'hx-post="/runs/start?lang=tr&amp;out=en&amp;ms={TERRA}&amp;mr={LUNA}"' in body
+    assert f'hx-post="/runs/start?lang=tr&amp;out=en&amp;ms={TERRA}&amp;mr={GPT6_LUNA}"' in body
     assert f"out=en&amp;ms={LUNA}" in body, "the language slots carry the models too"
 
 
 def test_an_unknown_model_in_the_url_draws_the_default(client: TestClient) -> None:
     body = client.get("/runs/confirm?ms=gpt-9-nonesuch").text
-    assert f'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms={LUNA}' in body
+    assert f'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms={GPT6_LUNA}' in body
 
 
 # -- the press ----------------------------------------------------------------
@@ -158,7 +173,7 @@ def test_a_press_that_names_nothing_runs_the_configured_models(
         client.post("/runs/start?lang=tr")
         client.post("/runs/start?lang=tr&ms=gpt-9-nonesuch")
 
-    assert seen == [(LUNA, LUNA), (LUNA, LUNA)]
+    assert seen == [(GPT6_LUNA, GPT6_LUNA), (GPT6_LUNA, GPT6_LUNA)]
 
 
 # -- the pipeline -------------------------------------------------------------
@@ -312,7 +327,7 @@ async def test_run_digest_resolves_both_models_before_it_opens_the_run(
     )
 
     assert seen["model_summarize"] == TERRA
-    assert seen["model_rank"] == LUNA, "an unusable name is the default, not an error"
+    assert seen["model_rank"] == GPT6_LUNA, "an unusable name is the default, not an error"
 
 
 # -- the terminal -------------------------------------------------------------
