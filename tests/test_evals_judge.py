@@ -287,6 +287,53 @@ async def test_labelled_mode_judges_only_what_the_reader_labelled(
     assert (table.wrong_caught, table.wrong_missed) == (1, 0)
 
 
+async def test_labelled_mode_does_not_call_the_model_for_nonfactual_feedback(
+    session: AsyncSession,
+    bulletin: Bulletin,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = list((await session.execute(select(Summary.id).order_by(Summary.id))).scalars())
+    for summary_id, reason in zip(
+        ids,
+        ("not_news", "duplicate", "wrong_place", None),
+        strict=False,
+    ):
+        session.add(Verdict(summary_id=summary_id, verdict="wrong", reason=reason))
+    await session.commit()
+
+    llm = FakeLLM(GroundingVerdict(passed=False, unsupported_claim="claim"))
+    monkeypatch.setattr(judge_module, "judge_model", lambda *_: llm)
+    table, outcomes = await judge_labelled(session, max_cost=0.0, settings=settings)
+
+    assert outcomes == []
+    assert llm.calls == []
+    assert table.n_wrong == 0
+    assert table.other_reason == 4
+
+
+async def test_labelled_mode_pays_only_for_wrong_fact_in_mixed_feedback(
+    session: AsyncSession,
+    bulletin: Bulletin,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = list((await session.execute(select(Summary.id).order_by(Summary.id))).scalars())
+    reasons = ("wrong_fact", "not_news", "duplicate", "wrong_place", None)
+    for summary_id, reason in zip(ids, reasons, strict=False):
+        session.add(Verdict(summary_id=summary_id, verdict="wrong", reason=reason))
+    await session.commit()
+
+    llm = FakeLLM(GroundingVerdict(passed=False, unsupported_claim="claim"))
+    monkeypatch.setattr(judge_module, "judge_model", lambda *_: llm)
+    table, outcomes = await judge_labelled(session, max_cost=1.0, settings=settings)
+
+    assert len(outcomes) == len(llm.calls) == 1
+    assert outcomes[0].candidate.human_reason == "wrong_fact"
+    assert table.wrong_caught == 1
+    assert table.other_reason == 4
+
+
 # -- the sample follows the reader (2026-09-08) --------------------------------
 
 
