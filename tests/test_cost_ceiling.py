@@ -46,11 +46,25 @@ def test_the_estimate_prices_each_node_at_the_model_that_will_run_it() -> None:
     assert estimate > estimate_digest_cost(n, "gpt-5.6-luna", "gpt-5.6-luna")
 
 
+def test_gpt6_luna_rates_are_used_for_the_default_press() -> None:
+    n = 20
+    summarize_in, summarize_out = SUMMARIZE_TOKENS_PER_ARTICLE
+    rank_in, rank_out = RANK_TOKENS_PER_CANDIDATE
+    expected = (n * summarize_in * 0.10 + n * summarize_out * 0.50) / 1_000_000
+    expected += (n * rank_in * 0.10 + n * rank_out * 0.50) / 1_000_000
+
+    assert estimate_cost("gpt-6-luna", 1_000_000, 1_000_000) == pytest.approx(0.60)
+    assert estimate_digest_cost(n, "gpt-6-luna", "gpt-6-luna") == pytest.approx(expected)
+    assert estimate_digest_cost(n, "gpt-6-luna", "gpt-6-luna") < estimate_digest_cost(
+        n, "gpt-5.6-luna", "gpt-5.6-luna"
+    )
+
+
 def test_an_ordinary_press_is_cents_and_the_backlog_case_is_dollars() -> None:
     """The two numbers the ceiling sits between, from the audit that asked for
     it: twenty candidates on the cheap tier against a week's backlog on the
     expensive one."""
-    ordinary = estimate_digest_cost(20, "gpt-5.6-luna", "gpt-5.6-luna")
+    ordinary = estimate_digest_cost(20, "gpt-6-luna", "gpt-6-luna")
     backlog = estimate_digest_cost(130, "gpt-6-astra", "gpt-6-astra")
 
     assert ordinary < 0.10
