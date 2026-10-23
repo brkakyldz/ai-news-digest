@@ -195,7 +195,7 @@ Four conventions, worth knowing before opening a file.
 |---|---|---|
 | Configuration | `src/ainews/config.py` | The only module that reads the environment. Nothing else touches `os.environ`. |
 | Sources | `src/ainews/sources/` | Talks to the outside world: HTTP, feed parsing, extraction, Tavily. Knows nothing about the graph. |
-| Persistence | `src/ainews/db/` | Ten tables plus an FTS5 index. Owns the connection pragmas. |
+| Persistence | `src/ainews/db/` | Eleven tables plus an FTS5 index. Owns the connection pragmas. |
 | Pipeline | `src/ainews/pipeline/` | The LangGraph nodes, the two entry points that open and close a run row, the price table, and the step recorder. `pipeline/api.py` is the only part of it the web layer may name. |
 | Scheduling | `src/ainews/scheduler.py` | One interval job, in-process. |
 | Web | `src/ainews/web/` | Routes, read queries, the shell's context, templates. Never writes a summary. `format.py` is pure formatting; `views.py` is what touches a session or a request; `queries.py` is SQL. |
@@ -259,7 +259,7 @@ translates Turkish prose, so changing it affects both stages' cost and quality.
 
 ## 6. The data model
 
-Ten real tables in `src/ainews/db/models.py`, plus a virtual one.
+Eleven real tables in `src/ainews/db/models.py`, plus a virtual one.
 
 Every timestamp column is `UTCDateTime`, a `TypeDecorator` rather than
 `DateTime(timezone=True)`. The difference matters because SQLite has no timestamp

@@ -81,6 +81,8 @@ calls. It must not estimate a zero-candidate retry as free ranking/translation.
 `lang` chooses both UI and available stored prose. For a new bilingual bulletin,
 EN/TR return identical story IDs, positions and tiers; only prose/reasons/note
 change. Never filter missing translations out of the selected list.
+The public story DOM uses `id="story-SUMMARY_ID"` and one ink-scale class
+`p1` through `p5`; the tier's ink class is identical across language views.
 Legacy single-language prose remains readable in either shell with its true
 language labelled. Extra unselected English stories without a cached TR version
 also retain membership and get an honest English fallback marker. No read pays
