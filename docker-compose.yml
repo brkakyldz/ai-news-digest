@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: ai-research-agent:latest
+    image: ai-news-digest:latest
     container_name: ainews
     restart: unless-stopped
     # Secrets come from the local dotenv file; copy the template first.

@@ -1,273 +1,129 @@
-# ai-research-agent
+<div align="center">
 
-A local-first LangGraph pipeline that reads the day's AI news so you don't have to
-open sixteen tabs. It polls RSS feeds every three hours, throws away the same
-story told by five outlets, summarises what is left in English with `gpt-6-luna`, ranks
-the whole day three times over and keeps what the three readings agree on, and
-translates the selected stories and editorial text into Turkish, and serves both
-stored views as a page you read over coffee.
+# AI News Digest
 
-One machine, one container. Switching language keeps the same stories and order.
+**The day's AI news from sixteen feeds, deduplicated, summarised and ranked into one bulletin you read in English or Turkish.**
 
-![The digest](docs/screenshots/digest.png)
+[![CI](https://github.com/brkakyldz/ai-news-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/brkakyldz/ai-news-digest/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab)
+![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-1c3c3c)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
----
+<img src="docs/media/hero.gif" alt="The app: today's bulletin, switching to Turkish and back, the light theme, search, and one run's node-by-node breakdown" width="100%">
 
-## Why it exists
+</div>
 
-Every AI newsletter is either a firehose or somebody else's taste. This is a
-tool, not a product: one reader, one page, and every editorial decision it makes
-is visible on screen and adjustable.
+## What it does
 
-Two sentences shape everything below.
+- **Watches sixteen AI news feeds** (OpenAI, DeepMind, Hugging Face, The Verge, TechCrunch, Simon Willison and more) and polls them every three hours. Polling is free, because a feed that has not changed answers `304`.
+- **Writes the day's bulletin when you press Run.** It drops the same launch reported by five outlets, summarises each remaining story, ranks the whole day three times and publishes the stories the readings put on top.
+- **Publishes every bulletin in English and Turkish.** It shows the same stories in the same order, and one switch flips both the prose and the interface.
+- **Shows its work.** Every run records each step's time, tokens and cost, and runs free quality checks on what it just published.
 
-**Nothing happens on a clock except the part that is free.** The feed poll runs
-every three hours and costs nothing. The digest spends money, so a person starts
-it — the page's job is to say when that is worth doing, and then get out of the
-way.
+Everything runs on one machine: a single container with a SQLite file, and no cloud services except the model API.
 
-**A concrete error is useful feedback.** A story's *wrong* action asks which
-claim failed — the fact, relevance, duplicate, or editorial placement — and
-accepts an optional note. There is no positive-label chore. A sampled grounding
-judge helps find suspect claims, but wrong-only feedback cannot establish its
-precision or specificity. Free content, numeral, budget and tag checks run on
-every press and land on `/runs/<id>` alongside production ranking agreement.
-
-It is also a portfolio piece, so the parts usually skipped are not: tests that
-cover the failure modes rather than the happy path, and a reason written next to
-every line that needed one.
-
-## How it works
-
-![Architecture](docs/architecture.png)
-
-Seven nodes, and each one exists because of a specific problem:
-
-| Node | Problem it solves |
-|---|---|
-| **collect** | Feeds are sliding windows, so polling has to be frequent — and frequent polling gets you banned, so every request carries the stored `ETag` and most come back `304`. |
-| **dedupe** | The same launch reaches us from OpenAI, TechCrunch, The Verge and Ars Technica. A canonical-URL unique index catches syndication; fuzzy title matching catches independent write-ups. |
-| **enrich** | A linkblog gives you a sentence and someone else's link. Three tiers, cheapest first: the feed's own HTML, then the page itself, then one capped Tavily search. |
-| **summarize** | A `Send` fan-out, one branch per story, each returning a validated Pydantic model. A branch that fails becomes an error entry, not a dead run. |
-| **rank** | Importance was scored one article at a time, blind to the rest of the day. This is the only step that sees all of it — three times, over the same candidates shuffled three ways, aggregated by Borda count. The three readings' agreement is stored on the bulletin, so a day nobody agreed on says so. |
-| **translate** | Translates every selected headline, summary, consequence, editorial note and placement reason into Turkish. A matching cached translation is reused. Missing required prose fails the run before publication. |
-| **persist** | Publishes the day's bulletin over the summaries in view, runs the free quality checks on what it just published, and closes the run row with tokens, cost and status. |
-
-The repository is named *agent* and the graph is not one in the tool-calling
-sense: nothing in it decides which node runs next. A bulletin needs a fixed
-line of seven nodes, one fan-out and structured output, and that is what it is.
-
-A summary belongs to an article and a bulletin belongs to a day, so `summarize`
-commits each summary the moment it comes back: a run that dies at `rank` has
-still bought ninety summaries, and the next press ranks them instead of paying
-for them again.
-
-Every node also writes down what it did — counts in and out, model, tokens, cost,
-duration — so a slow or expensive run can be read step by step at `/runs/<id>`.
-
-The long version, from a feed being polled to a story being read, is
-[`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
-
-## Run it
-
-**Without a key.** The repository ships three real recorded days — the
-bulletins, the runs behind them, the quality numbers those runs produced and the
-reader's own labels — so a stranger can read the thing before deciding whether to
-pay for a key:
+## Try it in one command
 
 ```bash
 docker compose -f docker-compose.demo.yml up --build
 ```
 
-A band above the reading names the day the press really ran, the feeds are not
-polled, and the control that spends money says there is no key. The recording
-carries headlines, links and the model's own writing but **no article bodies** —
-an article is someone else's text — so the grounding judge has nothing to read on
-it and says so.
+Open <http://localhost:8000>. The demo ships three real recorded days, so it needs no API key and spends nothing. The recording keeps headlines, links and the model's writing, but not the articles themselves, which belong to their publishers.
 
-**With a key.** Docker and an `OPENAI_API_KEY`. Tavily is optional — without it
-the pipeline just skips the third enrichment tier.
+**With your own key.** You need Docker and an `OPENAI_API_KEY`. Tavily is optional: without it, the third enrichment step is skipped.
 
 ```bash
-cp env.example.template .env    # then put your OPENAI_API_KEY in it
+cp env.example.template .env    # add your OPENAI_API_KEY
 docker compose up --build
 ```
 
-Open <http://localhost:8000>. The database is empty on the first start, so go to
-**çalışmalar / runs** and press the button: it polls all sixteen feeds,
-summarises what it finds and writes the day's bulletin. One click gets a
-question, not a run — the confirmation asks which models to use, with the price
-per million tokens underneath. Every new bulletin is available in English and
-Turkish; the top-bar switch changes the interface and stored prose together.
+Open **Runs** and press **Run now**. The confirmation shows how many stories are waiting and which models will be used before anything is spent.
 
-After that the feeds keep being polled every three hours and nothing else happens
-by itself. `/runs` leads with when the last bulletin landed and a countdown to
-when another one is worth starting. It advises and never refuses: a second press
-the same day buys summaries only for what has arrived since, then re-ranks the
-whole day and publishes a new **version** of today's bulletin — so pressing twice
-improves the page instead of adding a second entry to the archive, and the
-version it replaced stays there as what the front page said at the time. The
-question tells you how many stories are waiting before you answer it. A press
-that dies half-way keeps every summary it had already paid for; there is nothing
-to resume, because the next press ranks the existing pool and reuses completed
-translations. A required translation failure preserves the previous bulletin and
-appears in the run log. Existing single-language archive entries remain readable,
-with their original language labelled when needed.
+## How a bulletin is made
 
-Without Docker — the recording:
+<img src="docs/media/pipeline.gif" alt="One real press, node by node: 2,601 items seen, 111 new, 110 kept, 110 summaries, 11 chosen and translated, one bulletin published for $0.062" width="100%">
 
-```bash
-uv sync
-echo DEMO_MODE=true > .env
-uv run ainews serve      # seeds the recorded day on the first start
-```
-
-and the real thing:
-
-```bash
-uv sync
-uv run ainews digest
-uv run ainews serve
-```
-
-The CLI calls exactly the same functions the feed poll and the dashboard's button
-call — there is no second implementation:
-
-```bash
-uv run ainews collect     # poll the feeds; no LLM, no cost
-uv run ainews digest      # the full pipeline
-uv run ainews sources     # what is being polled and what it last said
-uv run ainews prune --dry-run   # what could be dropped; drop it without the flag
-uv run ainews demo seed   # the recorded day, into an empty database
-uv run ainews demo export # a fresh recording out of your own archive
-```
-
-## The pages
-
-| | |
+| Step | What it does |
 |---|---|
-| `/` | Today's bulletin: the day's brief, a topic filter with the day's impact spread on the end of it, what the editor published — fifteen is a ceiling, not a quota — and an expander for the rest of the day's relevant summaries. |
-| `/archive` | Past bulletins, by day. A day pressed twice is one entry that names its version. |
-| `/search` | Canonical full-text search plus stored Turkish translations, projected into the chosen language without duplicate story IDs. |
-| `/sources` | Enable, disable or add a feed; last status per source. |
-| `/runs` | The advice block and the press, spend for today / 7 days / 30 days, the week's story counts, and every run with its cost, duration and errors. |
-| `/runs/<id>` | One run, node by node: which step took the time, which took the money, which model wrote it — and under it the free quality checks on the bulletin that run published, as they were computed at the press. |
-| `/runs/verdicts` | Claims the grounding judge could not find in the article, and categorized wrong-story feedback with optional notes. |
+| **collect** | Polls every enabled feed with its stored `ETag`, so an unchanged feed costs one `304`. |
+| **dedupe** | Matches canonical URLs for syndicated copies, then fuzzy-matches titles for independent write-ups of the same story. |
+| **enrich** | Gives thin items a body using the cheapest source that works: the feed's own HTML, then the page, then one capped Tavily search. |
+| **summarize** | Fans out one LangGraph `Send` branch per story. Each branch returns a validated Pydantic model and saves its own row. |
+| **rank ×3** | Reads the whole day three times, shuffled, and merges the readings by Borda count. Their agreement is stored with the bulletin. |
+| **translate** | Writes Turkish versions of the selected stories and the editor's note, reusing any translation already made. |
+| **persist** | Publishes the bulletin, runs the free quality checks on it and closes the run with its tokens and cost. |
 
-![Runs](docs/screenshots/runs.png)
+The feed poll is the only thing that runs on a schedule. A bulletin costs money, so it waits for a person to press Run.
 
-A run is not a status word. Each node says what came in, what went out, where
-the time went and what it cost, so "it was slow" resolves to a step:
+A second press on the same day summarises only what has arrived since, re-ranks the whole day and publishes version 2 of the same bulletin. If a press fails half-way, the summaries it already paid for are kept, and the next press starts from them.
 
-![One run, node by node](docs/screenshots/run-detail.png)
+This is a fixed LangGraph pipeline, not a tool-calling agent: no model decides which step runs next. [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) walks through the whole path, from a feed being polled to a story being read.
 
-Every page wears the same shell: a left rail that is navigation and nothing else,
-and one bar across the top holding only the reader's own controls — search
-(`/` or Ctrl-K), reading/interface language, theme. Cost and duration live on `/runs`,
-with the run they belong to. The rail collapses to icons with the chevron by the
-brand.
+## Screens
 
-The theme follows your system unless you pick one, and both the theme and the
-language are a query parameter first and a cookie second (`?theme=light`) — so a
-link is shareable and a screenshot is reproducible from its URL.
-
-![The digest in the light theme](docs/screenshots/digest-light.png)
-
-![Sources](docs/screenshots/sources.png)
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/digest-light.png" alt="Today's bulletin in the light theme"></td>
+<td width="50%"><img src="docs/screenshots/run-detail.png" alt="One run, node by node, with the free quality checks"></td>
+</tr>
+<tr>
+<td><b>The bulletin.</b> Headline size follows importance. Every story says why it matters and links to its source.</td>
+<td><b>One run.</b> Time, tokens and cost per step, and the checks run on what it published.</td>
+</tr>
+</table>
 
 ## What it costs
 
-Historical measurements from the single-language GPT-5.6 Luna pipeline in
-September 2026; these are not measurements of the new bilingual default:
+The press in the animation above ran on 2026-10-23 with `gpt-6-luna` on every paid step:
 
-| | Summarised | Ranked | Tokens (in / out) | Cost | Time |
+| New stories summarised | Ranked (×3) | Published and translated | Tokens | Cost | Time |
 |---|---|---|---|---|---|
-| First run (a week's backlog) | 136 | 136 | 191,960 / 64,126 | **$0.115** | 85s |
-| A three-hour delta | 21 | 21 | 30,600 / 8,200 | **$0.017** | 43s |
-| A two-day delta | 20 | 20 | 32,195 / 12,363 | **$0.021** | 58s |
-| A press over a standing pool | 32 | 129 | 137,057 / 22,563 | **$0.055** | 63s |
+| 110 | 106 | 11 | 322,715 | **$0.062** | 3 min 05 s |
 
-A new press pays for new English summaries, three rankings of the standing pool,
-missing selected-story translations and that bulletin's translated editorial text.
-Reading either language is free. GPT-6 Luna Standard short-context prices were
-verified on 2026-10-23 at **$0.10 input / $0.50 output per million tokens**; see
-[OpenAI pricing](https://developers.openai.com/api/docs/pricing). Recorded usage
-is costed at the selected model, and the report sums each digest run once, even
-when several bulletin versions reuse its summaries. The default estimated
-per-press ceiling remains **$1**. Tavily has its separate daily credit cap.
-
-## Design, in one line
-
-A tool, not a landing page: no hero, no atmosphere, no scroll animation. Ranking
-is carried by the typography itself — a headline's size and ink step come from
-the importance score, and below a 3 a story collapses to its headline. Colour is
-rationed and every job is named: the accent for *where am I standing* and for the
-one control that spends money, `--alarm` for a failed run, and three colours on
-the impact meter. The reasoning is in
-[`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md#117-the-page-itself).
+That run was priced at $0.10 per million input tokens and $0.50 per million output tokens ([OpenAI pricing](https://developers.openai.com/api/docs/pricing), checked 2026-10-23). Reading, searching and feed polling cost nothing. Each press has an estimated ceiling, $1 by default, and Tavily has its own daily credit cap.
 
 ## Is it any good?
 
-Each press stores its free product checks and shows them on its run detail.
-Paid grounding and prompt comparisons are explicit CLI commands with cost caps;
-their measurements complement those stored signals. `pytest` stays offline and free.
+Each press runs free checks on what it published and stores the results. They show whether the key fact survived the summary, whether every number in a summary appears in its article, whether word budgets were kept, how useful the tags are, and how much the three rankings agreed.
+
+On any story you can press **Wrong** and say which claim failed: the fact, whether it is news at all, a duplicate, or its placement. The checks that cost money are explicit CLI commands with a cost cap: a sampled grounding judge, and a comparison of two prompts over the same frozen articles. Nothing in the app starts them. [`docs/EVALUATING.md`](docs/EVALUATING.md) explains each number and when to trust it.
+
+## Without Docker
 
 ```bash
-uv run ainews eval record --bulletin latest    # a bulletin → a JSON fixture; no key, no network
-uv run ainews eval judge --bulletin latest     # sampled grounding; estimates before spending
-uv run ainews eval corpus                       # freeze 40 article bodies; no key, gitignored
-uv run ainews eval compare --prompt-a a.md --prompt-b b.md   # same bodies, two prompts, ~$0.02
-uv run ainews eval report                       # actionable checks, appended to docs/evals.md
-uv run ainews eval report --bulletin <id>       # one detail section; spend window unchanged
+uv sync
+uv run ainews digest      # one full press
+uv run ainews serve       # the dashboard on :8000
 ```
 
-The free half of that — the deterministic checks, which read rows and call
-nothing — is product code in `ainews/quality/`, runs on every press and is drawn
-on `/runs/<id>`. `ainews/evals/` is the half that spends money, and nothing in
-the application imports it: deleting the package breaks one CLI subcommand and
-nothing else. [`docs/EVALUATING.md`](docs/EVALUATING.md) is the manual — what
-each number means, when it is worth believing, and how to add a check.
+To serve the demo instead, set `DEMO_MODE=true` in `.env` before the first `serve` on an empty database. The CLI calls the same functions as the dashboard:
 
-[`docs/evals.md`](docs/evals.md) preserves the dated historical measurements.
-New reports keep content-floor checks, numeral grounding/recall, word budgets,
-tag usefulness, production agreement, categorized wrong feedback and recorded
-product/eval spend. The standalone paid rank-stability experiment is removed;
-the three production rank calls and their agreement remain. Missing agreement
-is shown explicitly. Canonical English is the quality-check input; these checks
-do not measure Turkish translation accuracy.
+```bash
+uv run ainews collect     # poll the feeds; no model, no cost
+uv run ainews sources     # what is polled and what each feed last said
+uv run ainews eval judge --bulletin latest   # paid, estimated and capped first
+```
 
-![How the evaluation works](docs/eval-architecture.png)
+## Stack
 
-The judge's suspect claims have a page rather than a line in a log. Mark a
-concrete problem and its reason there; an unreported story is never counted as
-a positive label.
+LangGraph `StateGraph` · `gpt-6-luna` via `langchain-openai` · feedparser and Tavily · SQLite (WAL, FTS5) with SQLAlchemy 2 and Alembic · FastAPI, Jinja and HTMX · APScheduler, in-process.
 
-![The reader's verdicts and the judge's failures](docs/screenshots/verdicts.png)
+```
+src/ainews/
+  sources/    feed polling and enrichment
+  pipeline/   the LangGraph graph and its seven nodes
+  quality/    free checks, run at every press
+  evals/      paid evaluations, imported only by the CLI
+  web/        the dashboard
+  demo/       the recorded days the demo serves
+```
 
 ## Development
 
 ```bash
 uv sync
-uv run pytest          # the whole suite, no API key, no network
+uv run pytest          # offline: a fake model, recorded HTTP, no key needed
 uv run ruff check .
-uv run pre-commit install
-```
-
-Tests use a fake model and `respx` for HTTP, so the whole suite runs offline in
-about a minute and a half and the graph tests exercise a full fan-out, three rank
-calls and a publish with nothing to pay for. `langgraph.json` is checked in for `langgraph
-dev` if you want to step through the graph in Studio, and per-call tracing is
-available behind a dev profile:
-
-```bash
-docker compose --profile dev up -d   # Phoenix on :6006, PHOENIX_ENABLED=true
-```
-
-Screenshots in this README are regenerated with:
-
-```bash
-uv sync --group docs && uv run playwright install chromium
-uv run python scripts/screenshots.py
 ```
 
 MIT licensed — see [`LICENSE`](LICENSE).

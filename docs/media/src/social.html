@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI News Digest — social preview</title>
+<link rel="stylesheet" href="glass.css">
+<style>
+  /* GitHub's social preview: 1280 × 640, uploaded by hand under Settings. */
+  :root { --w: 1280px; --h: 640px; }
+  .card { left: 140px; top: 96px; width: 1000px; height: 448px; padding: 40px 48px; display: flex; flex-direction: column; }
+  .top { display: flex; gap: 16px; align-items: center; }
+  .top .pill { flex: 1; height: 70px; display: flex; align-items: center; gap: 16px; padding: 0 28px; font-size: 24px; color: rgba(29, 42, 58, 0.66); }
+  .top .round { width: 70px; height: 70px; }
+  h1 { font-size: 104px; font-weight: 600; line-height: 1; margin-top: 46px; letter-spacing: -0.01em; }
+  p { font-size: 34px; color: var(--ink-soft); margin-top: 16px; }
+  .stack { display: flex; gap: 12px; margin-top: auto; }
+  .stack span { font-size: 22px; padding: 8px 18px; border-radius: 999px; background: rgba(255, 255, 255, 0.14); border: 1.5px solid rgba(255, 255, 255, 0.3); }
+</style>
+</head>
+<body>
+<div class="sea"></div>
+<div class="glass card">
+  <div class="top">
+    <div class="pill">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#1d2a3a" stroke-width="2.2" stroke-linecap="round"><path d="M5 4a15 15 0 0 1 15 15"/><path d="M5 10.5a8.5 8.5 0 0 1 8.5 8.5"/><circle cx="6" cy="18" r="1.6" fill="#1d2a3a"/></svg>
+      16 feeds · 2,601 items seen · 11 stories kept
+    </div>
+    <div class="round"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="#1d2a3a"/></svg></div>
+  </div>
+  <h1>AI News Digest</h1>
+  <p>The day's AI news, deduped, summarised and ranked.</p>
+  <div class="stack"><span>English + Turkish</span><span>LangGraph</span><span>FastAPI + HTMX</span><span>SQLite</span><span>~$0.06 a press</span></div>
+</div>
+</body>
+</html>
