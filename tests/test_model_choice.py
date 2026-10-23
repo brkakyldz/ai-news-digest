@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ainews.clock import local_day
 from ainews.config import Settings
-from ainews.db import Article, Run, Source, Summary
+from ainews.db import Article, Run, Source, Summary, SummaryTranslation
 from ainews.pipeline.pricing import (
     MODEL_NAMES,
     estimate_cost,
@@ -277,6 +277,18 @@ async def test_the_run_row_is_priced_at_the_models_that_ran(
     )
     session.add(summary)
     await session.commit()
+    session.add(
+        SummaryTranslation(
+            summary_id=summary.id,
+            language="tr",
+            title_local="Baslik",
+            summary="Ozet.",
+            why_it_matters="Onemli.",
+            canonical_hash=summary.content_hash,
+            model=GPT6_LUNA,
+        )
+    )
+    await session.commit()
 
     state = {
         "run_id": run.id,
@@ -296,6 +308,8 @@ async def test_the_run_row_is_priced_at_the_models_that_ran(
         ],
         "rank_usage": {"tokens_in": 5000, "tokens_out": 300},
         "ranked": [{"summary_id": summary.id, "position": 1, "tier": "lead", "reason": ""}],
+        "editor_note": "This story led the day.",
+        "editor_note_tr": "Bu haber gunun ana konusuydu.",
         "errors": [],
     }
     await persist_run(session, state, settings)  # type: ignore[arg-type]

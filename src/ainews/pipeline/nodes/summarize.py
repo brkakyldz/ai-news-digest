@@ -107,24 +107,35 @@ class Draft:
     est_cost_usd: float
 
 
+@dataclass(slots=True)
+class DraftFailure:
+    """A failed answer with any usage the provider returned alongside it."""
+
+    message: str
+    model: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+
 async def draft_summary(
     article_id: int,
     language: str,
     settings: Settings | None = None,
     model: str | None = None,
-) -> Draft | str:
+) -> Draft | DraftFailure:
     """Summarise one article, or say in one sentence why there is no summary.
 
-    A string and not an exception: every caller has to carry on without this
-    article, and a return value makes that the ordinary path rather than a
-    `try` around each one.
+    A `DraftFailure` rather than an exception: every caller has to carry on
+    without this article, and a return value makes that the ordinary path
+    rather than a `try` around each one.
     """
     settings = settings or get_settings()
+    model_name = resolve_model(model, settings.openai_model_summarize)
 
     async with session_scope() as session:
         article = await session.get(Article, article_id)
         if article is None:
-            return f"article {article_id} vanished before summarising"
+            return DraftFailure(f"article {article_id} vanished before summarising", model_name)
         source = await session.get(Source, article.source_id)
         prompt = build_prompt(
             language,
@@ -136,7 +147,6 @@ async def draft_summary(
             extra=article.extra_text or "",
         )
 
-    model_name = resolve_model(model, settings.openai_model_summarize)
     try:
         client = summarizer(settings, model_name).with_structured_output(
             ArticleSummary, include_raw=True
@@ -144,15 +154,21 @@ async def draft_summary(
         response = await client.ainvoke(prompt)
     except Exception as exc:
         log.warning("summarise failed for article %d: %s", article_id, exc)
-        return f"article {article_id}: {type(exc).__name__}: {exc}"[:300]
+        return DraftFailure(f"article {article_id}: {type(exc).__name__}: {exc}"[:300], model_name)
 
     parsed = response.get("parsed") if isinstance(response, dict) else None
     if parsed is None:
         detail = response.get("parsing_error") if isinstance(response, dict) else "no parsed output"
         log.warning("summarise returned unusable output for article %d: %s", article_id, detail)
-        return f"article {article_id}: unparsable model output"
+        usage = usage_from_message(response.get("raw") if isinstance(response, dict) else None)
+        return DraftFailure(
+            f"article {article_id}: unparsable model output",
+            model_name,
+            usage.tokens_in,
+            usage.tokens_out,
+        )
 
-    usage = usage_from_message(response.get("raw"))
+    usage = usage_from_message(response.get("raw") if isinstance(response, dict) else None)
     return Draft(
         parsed=parsed,
         model=model_name,
@@ -170,8 +186,19 @@ async def summarize_article(
     language = state["language"]
 
     draft = await draft_summary(article_id, language, settings, state.get("model"))
-    if isinstance(draft, str):
-        return {"errors": [draft]}
+    if isinstance(draft, DraftFailure):
+        return {
+            "errors": [draft.message],
+            "summary_failures": [
+                {
+                    "article_id": article_id,
+                    "model": draft.model,
+                    "tokens_in": draft.tokens_in,
+                    "tokens_out": draft.tokens_out,
+                    "est_cost_usd": estimate_cost(draft.model, draft.tokens_in, draft.tokens_out),
+                }
+            ],
+        }
 
     async with session_scope() as session:
         summary = Summary(

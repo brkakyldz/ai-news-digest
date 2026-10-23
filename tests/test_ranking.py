@@ -38,6 +38,7 @@ from ainews.pipeline.nodes.rank import (
     previous_headlines,
     rank_day,
 )
+from ainews.pipeline.state import Pick, RankedDigest
 
 # -- the measures -------------------------------------------------------------
 
@@ -363,6 +364,42 @@ async def test_every_call_failing_still_ships_a_bulletin(
     assert ranking.order == [2, 1]
     assert ranking.agreement is None
     assert ranking.tiers[2] == "lead"
+
+
+async def test_unparsable_paid_rank_response_keeps_usage_without_counting_as_a_vote(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Raw:
+        def __init__(self, input_tokens: int, output_tokens: int) -> None:
+            self.usage_metadata = {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            }
+
+    responses = [
+        {"parsed": None, "raw": Raw(70, 30)},
+        {
+            "parsed": RankedDigest(
+                editor_note="One story led today.", picks=[Pick(number=1, tier="lead")]
+            ),
+            "raw": Raw(80, 40),
+        },
+    ]
+
+    class Structured:
+        async def ainvoke(self, _prompt: str) -> dict[str, object]:
+            return responses.pop(0)
+
+    class FakeRanker:
+        def with_structured_output(self, *_: object, **__: object) -> Structured:
+            return Structured()
+
+    monkeypatch.setattr(rank_module, "ranker", lambda *_: FakeRanker())
+    ranking = await rank_day([_candidate(1), _candidate(2)], "en", settings=settings, passes=2)
+
+    assert ranking.order == [1]
+    assert ranking.agreement is None
+    assert (ranking.tokens_in, ranking.tokens_out) == (150, 70)
 
 
 async def test_the_first_arrangement_is_the_pool_and_the_rest_are_shuffled(

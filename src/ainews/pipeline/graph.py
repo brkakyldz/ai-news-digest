@@ -1,16 +1,19 @@
 """The digest graph.
 
-    START -> collect -> dedupe -> enrich -> [Send x N] summarize -> rank -> persist -> END
+    START -> collect -> dedupe -> enrich -> [Send x N] summarize -> rank
+         -> translate -> persist -> END
 
 Only one edge in that line is interesting: the one into `summarize`. It is a
 conditional edge returning a list of `Send` objects, one per surviving candidate,
 which is LangGraph's map-reduce - a hundred independent branches in a single
-superstep, each writing into a state key with an `operator.add` reducer.
+superstep, each writing into a state key with an `operator.add` reducer. An
+empty delta skips summarisation but still ranks the standing pool, translates
+the selection and publishes the new day version.
 
 Two settings on the invoke matter. A hundred simultaneous requests will collect
 429s, so `max_concurrency` throttles them to `SUMMARIZE_BATCH_SIZE` at a time.
 And `recursion_limit` counts supersteps: a `Send` fan-out is one superstep
-however wide it is, so the real depth here is six and the default of 25 would
+however wide it is, so the real depth here is seven and the default of 25 would
 do - the runner raises it anyway as insurance against a future node that loops.
 
 There is no checkpointer. A checkpoint is a way of not losing work when a run
@@ -38,6 +41,7 @@ from ainews.pipeline.nodes.enrich import enrich_articles
 from ainews.pipeline.nodes.persist import persist_run
 from ainews.pipeline.nodes.rank import day_pool, previous_headlines, rank_day
 from ainews.pipeline.nodes.summarize import summarize_article
+from ainews.pipeline.nodes.translate import TranslationFailure, translate_publication
 from ainews.pipeline.pricing import CostCeiling, estimate_digest_cost
 from ainews.pipeline.state import PipelineState
 from ainews.pipeline.steps import record_fan_out, step
@@ -76,11 +80,11 @@ async def dedupe_node(state: PipelineState) -> PipelineState:
             candidate_ids, stats = await dedupe_candidates(session)
         s.counts(stats.n_candidates, len(candidate_ids))
         s.note_key("dedupe", dropped=stats.n_duplicates)
-        _guard_cost(state, len(candidate_ids))
+        await _guard_cost(state, len(candidate_ids))
         return {"candidate_ids": candidate_ids}
 
 
-def _guard_cost(state: PipelineState, n_candidates: int) -> None:
+async def _guard_cost(state: PipelineState, n_candidates: int) -> None:
     """Refuse a press that would cost more than the ceiling, before it spends.
 
     Here and not at the press, because here is the first moment the real number
@@ -95,12 +99,25 @@ def _guard_cost(state: PipelineState, n_candidates: int) -> None:
     """
     settings = get_settings()
     ceiling = settings.digest_max_cost_usd
-    if not ceiling or not n_candidates:
+    if not ceiling:
+        return
+    if "day" in state:
+        async with session_scope() as session:
+            existing = await day_pool(session, state["day"], "en", settings)
+        existing_count = len(existing)
+    else:
+        # Unit callers without a run day can only offer the new-candidate count.
+        existing_count = 0
+    rank_pool = existing_count + n_candidates
+    selected = min(settings.digest_top_n, rank_pool)
+    if rank_pool == 0:
         return
     estimate = estimate_digest_cost(
         n_candidates,
         state.get("model_summarize") or settings.openai_model_summarize,
         state.get("model_rank") or settings.openai_model,
+        rank_pool=rank_pool,
+        selected=selected,
     )
     if estimate > ceiling:
         raise CostCeiling(estimate, ceiling, n_candidates)
@@ -125,10 +142,10 @@ async def enrich_node(state: PipelineState) -> PipelineState:
 
 
 def fan_out_summaries(state: PipelineState) -> list[Send] | str:
-    """One `Send` per candidate, or a jump to the end when there is nothing to do."""
+    """One `Send` per candidate; an empty delta still re-ranks the day."""
     candidate_ids = state.get("candidate_ids") or []
     if not candidate_ids:
-        return "persist"
+        return "rank"
     # The model rides on every `Send` rather than being read inside the node:
     # the branches are the run, and a run has to be summarised by one model even
     # if the environment changes halfway through it.
@@ -138,7 +155,7 @@ def fan_out_summaries(state: PipelineState) -> list[Send] | str:
             "summarize",
             {
                 "run_id": state["run_id"],
-                "language": state["language"],
+                "language": "en",
                 "article_id": article_id,
                 "model": model,
             },
@@ -160,9 +177,12 @@ async def rank_node(state: PipelineState) -> PipelineState:
     could not carry.
     """
     async with step(state["run_id"], "rank") as s:
+        # Record the paid fan-out before rank can fail; the row is also the
+        # source used by failed-run accounting.
+        await record_fan_out(state, s.started_at)
         async with session_scope() as session:
-            candidates = await day_pool(session, state["day"], state["language"])
-            previous = await previous_headlines(session, state["day"], state["language"])
+            candidates = await day_pool(session, state["day"], "en")
+            previous = await previous_headlines(session, state["day"], "en")
 
         if not candidates:
             s.counts(0, 0)
@@ -170,7 +190,7 @@ async def rank_node(state: PipelineState) -> PipelineState:
 
         ranking = await rank_day(
             candidates,
-            state["language"],
+            "en",
             previous=previous,
             model=state.get("model_rank"),
             seed=state["run_id"],
@@ -208,11 +228,28 @@ async def rank_node(state: PipelineState) -> PipelineState:
         }
 
 
+async def translate_node(state: PipelineState) -> PipelineState:
+    async with step(state["run_id"], "translate") as s:
+        try:
+            result = await translate_publication(state)
+        except TranslationFailure as exc:
+            s.spend(
+                state.get("model_summarize") or get_settings().openai_model_summarize,
+                exc.tokens_in,
+                exc.tokens_out,
+            )
+            raise
+        s.counts(len(state.get("ranked") or []), len(result.get("translated") or []))
+        s.spend(
+            state.get("model_summarize") or get_settings().openai_model_summarize,
+            result.get("translation_tokens_in", 0),
+            result.get("translation_tokens_out", 0),
+        )
+        return result
+
+
 async def persist_node(state: PipelineState) -> PipelineState:
     async with step(state["run_id"], "persist") as s:
-        # The fan-out's own row, written here because this is the first moment
-        # both of its neighbours have rows to be measured between.
-        await record_fan_out(state)
         async with session_scope() as session:
             run = await persist_run(session, state)
         s.counts(len(state.get("summaries") or []), run.n_summarized)
@@ -223,7 +260,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
 def build_graph() -> StateGraph:
     """The graph itself, built once.
 
-    Cached because it is built from constants - six nodes and their edges, no
+    Cached because it is built from constants - seven nodes and their edges, no
     settings and no session - so there is nothing per-run for it to close over.
     """
     graph = StateGraph(PipelineState)
@@ -232,13 +269,15 @@ def build_graph() -> StateGraph:
     graph.add_node("enrich", enrich_node)
     graph.add_node("summarize", summarize_article)
     graph.add_node("rank", rank_node)
+    graph.add_node("translate", translate_node)
     graph.add_node("persist", persist_node)
 
     graph.add_edge(START, "collect")
     graph.add_edge("collect", "dedupe")
     graph.add_edge("dedupe", "enrich")
-    graph.add_conditional_edges("enrich", fan_out_summaries, ["summarize", "persist"])
+    graph.add_conditional_edges("enrich", fan_out_summaries, ["summarize", "rank"])
     graph.add_edge("summarize", "rank")
-    graph.add_edge("rank", "persist")
+    graph.add_edge("rank", "translate")
+    graph.add_edge("translate", "persist")
     graph.add_edge("persist", END)
     return graph

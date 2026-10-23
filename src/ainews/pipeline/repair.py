@@ -30,8 +30,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ainews.config import Settings, get_settings
-from ainews.db import Article, Source, Summary
-from ainews.pipeline.nodes.summarize import draft_summary
+from ainews.db import Article, Source, Summary, SummaryTranslation
+from ainews.pipeline.nodes.summarize import DraftFailure, draft_summary
 from ainews.pipeline.pricing import resolve_model
 from ainews.sources.extract import clean_html, fetch_article, is_usable
 
@@ -129,8 +129,10 @@ async def resummarize(
         # Through the call the pipeline uses, not a second implementation: a
         # repaired summary has to be the summary a run would have written.
         draft = await draft_summary(article_id, language, settings, model)
-        if isinstance(draft, str):
-            log.warning("resummarize failed for article %d (%s): %s", article_id, language, draft)
+        if isinstance(draft, DraftFailure):
+            log.warning(
+                "resummarize failed for article %d (%s): %s", article_id, language, draft.message
+            )
             continue
         rows = (
             await session.execute(
@@ -154,6 +156,15 @@ async def resummarize(
             row.tokens_in = draft.tokens_in
             row.tokens_out = draft.tokens_out
             row.est_cost_usd = draft.est_cost_usd
+            # A translation describes the old canonical prose. Delete it in
+            # this same transaction so a failed repair leaves the old cache,
+            # while a committed repair cannot project stale Turkish as valid.
+            if row.language == "en":
+                await session.execute(
+                    SummaryTranslation.__table__.delete().where(
+                        SummaryTranslation.summary_id == row.id
+                    )
+                )
             rewritten += 1
     await session.commit()
 

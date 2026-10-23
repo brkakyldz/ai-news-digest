@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ainews.pipeline.agreement import RANK_PASSES
+
 log = logging.getLogger(__name__)
 
 # USD per 1M tokens: (input, output).
@@ -73,6 +75,10 @@ def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
 # change whether it fires.
 SUMMARIZE_TOKENS_PER_ARTICLE = (1438, 513)
 RANK_TOKENS_PER_CANDIDATE = (172, 105)
+# Conservative translation envelope per selected story plus the shared
+# editorial call; the guard must still protect a zero-new-candidate retry.
+TRANSLATE_TOKENS_PER_STORY = (900, 900)
+EDITORIAL_TRANSLATE_TOKENS = (1800, 1000)
 
 
 class CostCeiling(RuntimeError):
@@ -95,7 +101,14 @@ class CostCeiling(RuntimeError):
         self.n_candidates = n_candidates
 
 
-def estimate_digest_cost(n_candidates: int, model_summarize: str, model_rank: str) -> float:
+def estimate_digest_cost(
+    n_candidates: int,
+    model_summarize: str,
+    model_rank: str,
+    *,
+    rank_pool: int | None = None,
+    selected: int | None = None,
+) -> float:
     """What a press over `n_candidates` articles is expected to cost.
 
     Priced per node at the model that will run it, because since ADR 0020 the
@@ -105,9 +118,24 @@ def estimate_digest_cost(n_candidates: int, model_summarize: str, model_rank: st
     """
     summarize_in, summarize_out = SUMMARIZE_TOKENS_PER_ARTICLE
     rank_in, rank_out = RANK_TOKENS_PER_CANDIDATE
-    return estimate_cost(
+    rank_pool = n_candidates if rank_pool is None else rank_pool
+    selected = 0 if selected is None else selected
+    total = estimate_cost(
         model_summarize, n_candidates * summarize_in, n_candidates * summarize_out
-    ) + estimate_cost(model_rank, n_candidates * rank_in, n_candidates * rank_out)
+    ) + estimate_cost(
+        model_rank,
+        RANK_PASSES * rank_pool * rank_in,
+        RANK_PASSES * rank_pool * rank_out,
+    )
+    if selected:
+        translate_in, translate_out = TRANSLATE_TOKENS_PER_STORY
+        editorial_in, editorial_out = EDITORIAL_TRANSLATE_TOKENS
+        total += estimate_cost(
+            model_summarize,
+            selected * translate_in + editorial_in,
+            selected * translate_out + editorial_out,
+        )
+    return total
 
 
 @dataclass(frozen=True, slots=True)
