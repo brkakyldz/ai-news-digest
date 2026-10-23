@@ -78,8 +78,8 @@ were deleted for saying it twice.
 
 ### 2.2 Money is a design material, not an implementation detail
 
-The budget was under $10 a month and the measured bill is about a dollar. That constraint
-is visible in the architecture, not just in the invoice:
+The budget is under $10 a month. Each run records its paid usage so the operator
+can compare actual presses with that budget. The constraint shapes the architecture:
 
 - Enrichment is **three tiers, cheapest first**, and the paid tier only runs for
   an item that is still empty after the two free ones.
@@ -96,9 +96,10 @@ is visible in the architecture, not just in the invoice:
   unattended is the thing that is free.
 
 What the constraint did *not* buy is a cheap pre-filter. Every collected article
-is summarised, because at $0.0011 a story a title-only filter deciding in
-advance what deserves reading would save a cent and hide the story the day was
-actually about (ADR 0001).
+is summarised: a title-only filter deciding in advance what deserves reading can
+hide the story the day was actually about (ADR 0001). Current summary, ranking
+and translation costs are recorded per run rather than inferred from the old
+single-language unit estimate.
 
 ### 2.3 Contain failures at the right boundary
 
@@ -252,8 +253,9 @@ The three `OPENAI_MODEL*` fields are **defaults, not settings** (ADR 0020):
 which model runs is an argument to the work, chosen in the confirmation on
 `/runs` or with the CLI's `--model-*` flags, and these say what a press that
 names nothing falls back to. `openai_model_summarize` is its own knob for the
-reason ADR 0001 gives: if Turkish quality ever disappoints, only the summarize
-node moves up a tier and ranking stays on the cheap model.
+reason ADR 0001 gives: summary and translation quality can move up a tier while
+ranking remains independently selectable. The selected summary model also
+translates Turkish prose, so changing it affects both stages' cost and quality.
 
 ## 6. The data model
 

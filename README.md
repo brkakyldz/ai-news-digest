@@ -208,9 +208,9 @@ the impact meter. The reasoning is in
 
 ## Is it any good?
 
-Output quality is a number a command regenerates, never a claim in a document.
-`pytest` stays offline and free; anything that spends money is a sibling command
-that says so and refuses above a cap.
+Each press stores its free product checks and shows them on its run detail.
+Paid grounding and prompt comparisons are explicit CLI commands with cost caps;
+their measurements complement those stored signals. `pytest` stays offline and free.
 
 ```bash
 uv run ainews eval record --bulletin latest    # a bulletin → a JSON fixture; no key, no network
