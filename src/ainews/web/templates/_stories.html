@@ -35,6 +35,7 @@
         <span class="favi" aria-hidden="true">{{ story.source[0] }}</span>{{ story.source }}
       </span>
       {% if story.age %}<span class="when">{{ story.age }}</span>{% endif %}
+      {% if story.language_label %}<span class="hint" lang="{{ story.prose_language }}">{{ t['lang_' ~ story.prose_language] }}</span>{% endif %}
       {# Three bars, not five, and the band decides how many are lit rather
          than the raw 1-5 score. The five were a shape with no legend: the
          reader could see that some were filled and had been told nothing about
@@ -52,14 +53,18 @@
       </span>
     </p>
 
-    <h2 class="item__t"><a href="{{ story.url }}" target="_blank" rel="noreferrer noopener">{{ story.title_local }}</a></h2>
+    <h2 class="item__t" lang="{{ story.prose_language }}"><a href="{{ story.url }}" target="_blank" rel="noreferrer noopener">{{ story.title_local }}</a></h2>
 
-    <p class="item__s">{{ story.summary }}</p>
+    <p class="item__s" lang="{{ story.prose_language }}">{{ story.summary }}</p>
+
+    {% if story.reason %}
+    <p class="item__reason hint" lang="{{ story.reason_language or story.prose_language }}">{{ t.placement_label }}: {{ story.reason }}</p>
+    {% endif %}
 
     {% if story.why_it_matters %}
     <div class="why">
       <p class="why__l">{{ t.why_label }}</p>
-      <p class="why__t">{{ story.why_it_matters }}</p>
+      <p class="why__t" lang="{{ story.prose_language }}">{{ story.why_it_matters }}</p>
     </div>
     {% endif %}
 

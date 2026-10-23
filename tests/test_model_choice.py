@@ -95,11 +95,11 @@ def test_the_question_offers_both_models_and_marks_the_configured_ones(
     asked = client.get("/runs/confirm?lang=tr").text
     assert asked.count('class="seg seg--model"') == 2, "one row for each paid node"
     assert "Özet modeli" in asked and "Sıralama modeli" in asked
+    assert "English + Türkçe" in asked
+    assert "seg--out" not in asked and "out=" not in asked
     for name in MODEL_NAMES:
         assert f"ms={name}" in asked and f"mr={name}" in asked
-    assert (
-        f'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms={GPT6_LUNA}&amp;mr={GPT6_LUNA}"' in asked
-    )
+    assert f'hx-post="/runs/start?lang=tr&amp;ms={GPT6_LUNA}&amp;mr={GPT6_LUNA}"' in asked
 
 
 def test_the_prices_are_on_the_question_before_the_press(
@@ -114,20 +114,19 @@ def test_the_prices_are_on_the_question_before_the_press(
     assert "özet $2.00/$12.00 · sıralama $0.10/$0.50" in dearer, "the summariser moved, not both"
 
 
-def test_choosing_a_model_keeps_the_language_already_chosen(
+def test_legacy_output_parameter_does_not_select_paid_language(
     client: TestClient,
 ) -> None:
-    """Every slot rebuilds the whole fragment, so a slot that forgot its
-    neighbour would quietly undo a choice the reader had already made - and the
-    only evidence would be the bulletin arriving in the wrong language."""
+    """Old confirmation URLs remain valid, but the selector no longer exists."""
     body = client.get(f"/runs/confirm?lang=tr&out=en&ms={TERRA}").text
-    assert f'hx-post="/runs/start?lang=tr&amp;out=en&amp;ms={TERRA}&amp;mr={GPT6_LUNA}"' in body
-    assert f"out=en&amp;ms={LUNA}" in body, "the language slots carry the models too"
+    assert f'hx-post="/runs/start?lang=tr&amp;ms={TERRA}&amp;mr={GPT6_LUNA}"' in body
+    assert "seg--out" not in body and "out=en" not in body
+    assert "English + Türkçe" in body
 
 
 def test_an_unknown_model_in_the_url_draws_the_default(client: TestClient) -> None:
     body = client.get("/runs/confirm?ms=gpt-9-nonesuch").text
-    assert f'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms={GPT6_LUNA}' in body
+    assert f'hx-post="/runs/start?lang=tr&amp;ms={GPT6_LUNA}' in body
 
 
 # -- the press ----------------------------------------------------------------
@@ -139,10 +138,12 @@ def test_the_press_sends_the_models_it_was_asked_for(
     from ainews.pipeline import runner
 
     settings.openai_api_key = "sk-test"
-    seen: list[tuple[str, str]] = []
+    seen: list[tuple[str, str, str]] = []
 
-    async def _record(model_summarize: str = "", model_rank: str = "", **_: object) -> str:
-        seen.append((model_summarize, model_rank))
+    async def _record(
+        language: str = "", model_summarize: str = "", model_rank: str = "", **_: object
+    ) -> str:
+        seen.append((language, model_summarize, model_rank))
         return ""
 
     monkeypatch.setattr(runner, "run_digest", _record)
@@ -150,7 +151,7 @@ def test_the_press_sends_the_models_it_was_asked_for(
     with TestClient(create_app(settings)) as client:
         client.post(f"/runs/start?lang=tr&out=tr&ms={TERRA}&mr={LUNA}")
 
-    assert seen == [(TERRA, LUNA)]
+    assert seen == [("en", TERRA, LUNA)]
 
 
 def test_a_press_that_names_nothing_runs_the_configured_models(

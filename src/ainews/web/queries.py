@@ -26,6 +26,7 @@ from ainews.db import (
     RunStep,
     Source,
     Summary,
+    SummaryTranslation,
     Verdict,
     bulletin_runs,
 )
@@ -104,6 +105,12 @@ class Story:
     importance: int
     tags: list[str]
     age: str
+    # The language of the prose actually shown, which can differ from the page.
+    prose_language: str = "en"
+    # Set for historical single-language rows and missing/stale translations,
+    # even when the shell happens to use the same language.
+    language_label: bool = False
+    reason_language: str | None = None
     tier: str | None = None
     # The ranker's own sentence for the placement, where it gave one.
     reason: str | None = None
@@ -199,26 +206,54 @@ def _to_story(
     age: str,
     verdict: Verdict | None = None,
     item: BulletinItem | None = None,
+    translation: SummaryTranslation | None = None,
+    *,
+    language: Language | None = None,
+    legacy: bool = False,
 ) -> Story:
     try:
         tags = json.loads(summary.tags_json or "[]")
     except json.JSONDecodeError:
         tags = []
+    use_translation = (
+        language == "tr"
+        and not legacy
+        and summary.language == "en"
+        and _valid_translation(summary, translation)
+    )
+    prose_language = "tr" if use_translation else summary.language
+    reason_language = prose_language
+    reason = item.reason if item else None
+    if (
+        item is not None
+        and language == "tr"
+        and not legacy
+        and item.reason_tr
+        and item.reason_tr.strip()
+    ):
+        reason = item.reason_tr
+        reason_language = "tr"
+    else:
+        reason_language = summary.language
+
     return Story(
         id=summary.id,
         source=source_name,
         url=article.url,
-        title_local=summary.title_local,
-        summary=summary.summary,
-        why_it_matters=summary.why_it_matters,
+        title_local=translation.title_local if use_translation else summary.title_local,
+        summary=translation.summary if use_translation else summary.summary,
+        why_it_matters=translation.why_it_matters if use_translation else summary.why_it_matters,
         # The summariser's own score, given with one article in view. What the
         # headline is drawn at is `Story.step`, which prefers the tier where
         # there is one and never mixes the two scales (ADR 0030).
         importance=summary.importance,
         tags=tags,
         age=age,
+        prose_language=prose_language,
+        language_label=legacy or (language is not None and prose_language != language),
+        reason_language=reason_language,
         tier=item.tier if item else None,
-        reason=item.reason if item else None,
+        reason=reason,
         verdict=verdict.verdict if verdict and verdict.verdict == "wrong" else None,
         verdict_reason=verdict.reason if verdict and verdict.verdict == "wrong" else None,
         verdict_note=verdict.note if verdict and verdict.verdict == "wrong" else None,
@@ -254,6 +289,34 @@ def _story_columns() -> Any:
     )
 
 
+async def _translations_for(
+    session: AsyncSession, summary_ids: set[int]
+) -> dict[int, SummaryTranslation]:
+    """Load the small set of cached Turkish prose rows for these summaries."""
+    if not summary_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(SummaryTranslation)
+            .where(SummaryTranslation.summary_id.in_(summary_ids))
+            .where(SummaryTranslation.language == "tr")
+        )
+    ).scalars()
+    return {row.summary_id: row for row in rows}
+
+
+def _valid_translation(summary: Summary, translation: SummaryTranslation | None) -> bool:
+    return bool(
+        translation is not None
+        and translation.language == "tr"
+        and translation.canonical_hash == summary.content_hash
+        and all(
+            value.strip()
+            for value in (translation.title_local, translation.summary, translation.why_it_matters)
+        )
+    )
+
+
 async def stories_for_bulletin(
     session: AsyncSession,
     bulletin: Bulletin,
@@ -283,11 +346,21 @@ async def stories_for_bulletin(
         .order_by(BulletinItem.position),
         tag,
     )
+    rows = (await session.execute(query)).all()
+    translations = await _translations_for(session, {summary.id for summary, *_ in rows})
     stories = [
         _to_story(
-            summary, article, name, relative_age(article.published_at, language), verdict, item
+            summary,
+            article,
+            name,
+            relative_age(article.published_at, language),
+            verdict,
+            item,
+            translations.get(summary.id),
+            language=language,
+            legacy=not bulletin.bilingual,
         )
-        for summary, article, name, verdict, item in (await session.execute(query)).all()
+        for summary, article, name, verdict, item in rows
     ]
     return [story for story in stories if _matches(story, tag)]
 
@@ -316,7 +389,9 @@ def _rest_of_day(bulletin: Bulletin) -> Any:
     )
     return (
         _story_columns()
-        .where(Summary.language == bulletin.language)
+        .where(
+            Summary.language.in_(("en", bulletin.language) if not bulletin.bilingual else ("en",))
+        )
         .where(Summary.created_at >= start)
         .where(Summary.created_at < end)
         .where(Summary.relevant.is_(True))
@@ -342,9 +417,20 @@ async def other_stories(
     query = _tagged(_rest_of_day(bulletin), tag).order_by(
         Summary.importance.desc(), Summary.id.asc()
     )
+    rows = (await session.execute(query)).all()
+    translations = await _translations_for(session, {summary.id for summary, *_ in rows})
     stories = [
-        _to_story(summary, article, name, relative_age(article.published_at, language), verdict)
-        for summary, article, name, verdict in (await session.execute(query)).all()
+        _to_story(
+            summary,
+            article,
+            name,
+            relative_age(article.published_at, language),
+            verdict,
+            translation=translations.get(summary.id),
+            language=language,
+            legacy=not bulletin.bilingual,
+        )
+        for summary, article, name, verdict in rows
     ]
     return [story for story in stories if _matches(story, tag)]
 
@@ -375,8 +461,25 @@ async def story_for_summary(
     if row is None:
         return None
     summary, article, source_name, verdict = row
+    translations = await _translations_for(session, {summary.id})
+    bulletin_states = set(
+        (
+            await session.execute(
+                select(Bulletin.bilingual)
+                .join(BulletinItem, BulletinItem.bulletin_id == Bulletin.id)
+                .where(BulletinItem.summary_id == summary.id)
+            )
+        ).scalars()
+    )
     return _to_story(
-        summary, article, source_name, relative_age(article.published_at, language), verdict
+        summary,
+        article,
+        source_name,
+        relative_age(article.published_at, language),
+        verdict,
+        translation=translations.get(summary.id),
+        language=language,
+        legacy=summary.language == "tr" or (bool(bulletin_states) and True not in bulletin_states),
     )
 
 
@@ -399,20 +502,17 @@ class TagCounts:
         return self.published if published_only else self.every
 
 
-async def tag_counts(session: AsyncSession, bulletin: Bulletin) -> TagCounts:
-    """Tags across the day, most common first, in both scopes.
+async def tag_counts(
+    session: AsyncSession, bulletin: Bulletin, *, include_all: bool = False
+) -> TagCounts:
+    """Tags on the list the reader can open, in bulletin and expanded scopes.
 
-    Counted in Python rather than in SQL because the tags live in a JSON column;
-    at a hundred rows a day that is not worth a second table, and a malformed
-    value is skipped here rather than failing a `json_each` mid-query.
-
-    The published scope has to track the list the page is showing. Before it
-    existed the counts were taken over every summary the run produced while the
-    filter they label narrowed the *ranked* fifteen, so the row said
-    `agents 27` on a page headed "15 haber" and pressing it returned four
-    stories. A count is a promise about what is behind the link.
+    The closed scope is the bulletin's selected IDs. The expanded scope adds
+    exactly the relevant, unselected English summaries returned by
+    `_rest_of_day`; irrelevant rows and summaries outside the visible day do
+    not contribute. Counts are decoded in Python so malformed JSON is skipped
+    instead of aborting the page.
     """
-    start, end = day_bounds(bulletin.day)
     published = set(
         (
             await session.execute(
@@ -420,43 +520,41 @@ async def tag_counts(session: AsyncSession, bulletin: Bulletin) -> TagCounts:
             )
         ).scalars()
     )
+    visible = set(published)
+    if include_all:
+        rest_ids = (
+            await session.execute(
+                _rest_of_day(bulletin).with_only_columns(Summary.id).order_by(None)
+            )
+        ).scalars()
+        visible.update(rest_ids)
+
     rows = (
-        await session.execute(
-            select(Summary.id, Summary.tags_json)
-            .where(Summary.language == bulletin.language)
-            .where(Summary.created_at >= start)
-            .where(Summary.created_at < end)
-        )
-    ).all()
-    # A bulletin may carry a story summarised on an earlier day - the pool is a
-    # window, not a calendar (`nodes/rank.day_pool`) - so its tags are counted
-    # from the item list rather than from the day's rows alone.
-    missing = published - {summary_id for summary_id, _ in rows}
-    if missing:
-        rows = list(rows) + list(
-            (
-                await session.execute(
-                    select(Summary.id, Summary.tags_json).where(Summary.id.in_(missing))
-                )
-            ).all()
-        )
+        (
+            await session.execute(
+                select(Summary.id, Summary.tags_json).where(Summary.id.in_(visible))
+            )
+        ).all()
+        if visible
+        else []
+    )
 
     in_bulletin: dict[str, int] = {}
-    every: dict[str, int] = {}
+    all_visible: dict[str, int] = {}
     for summary_id, raw in rows:
         try:
             tags = json.loads(raw or "[]")
         except json.JSONDecodeError:
             continue
-        for tag in tags:
-            every[tag] = every.get(tag, 0) + 1
+        for tag in set(tags):
+            all_visible[tag] = all_visible.get(tag, 0) + 1
             if summary_id in published:
                 in_bulletin[tag] = in_bulletin.get(tag, 0) + 1
 
     def ordered(counts: dict[str, int]) -> list[tuple[str, int]]:
         return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
-    return TagCounts(published=ordered(in_bulletin), every=ordered(every))
+    return TagCounts(published=ordered(in_bulletin), every=ordered(all_visible))
 
 
 @dataclass(slots=True)
@@ -537,35 +635,78 @@ def _fts_query(raw: str) -> str:
 async def search_stories(
     session: AsyncSession, raw_query: str, language: Language, limit: int = 60
 ) -> Page[Story]:
-    """Full-text hits across every bulletin, in every language.
-
-    `language` reaches only the age string. The index is not filtered by it: a
-    reader looking for a company name wants the article, and refusing to show it
-    because the digest that covered it was written in the other language is the
-    same content filter the shell's switch stopped being (ADR 0017).
-    """
+    """Search canonical prose and valid Turkish translations without duplicates."""
     expression = _fts_query(raw_query)
     if not expression:
         return Page(rows=[], total=0, limit=limit)
 
-    # The count first, because "60 of 214 hits" is the sentence a search box owes
-    # its reader, and FTS5 answers it without materialising the rows.
-    total = (
-        await session.execute(
-            text("SELECT count(*) FROM summaries_fts WHERE summaries_fts MATCH :q"),
-            {"q": expression},
+    # Canonical FTS remains available in both shells. SQLite LIKE treats % and
+    # _ as operators, so escape them before looking through translated prose.
+    canonical_ids = list(
+        (
+            await session.execute(
+                text("SELECT rowid FROM summaries_fts WHERE summaries_fts MATCH :q ORDER BY rank"),
+                {"q": expression},
+            )
+        ).scalars()
+    )
+
+    translation_ids: list[int] = []
+    valid_translations: dict[int, SummaryTranslation] = {}
+    if language == "tr":
+        escaped = raw_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        translated_rows = (
+            await session.execute(
+                select(SummaryTranslation, Summary)
+                .join(Summary, Summary.id == SummaryTranslation.summary_id)
+                .where(SummaryTranslation.language == "tr")
+                .where(
+                    func.lower(SummaryTranslation.title_local).like(pattern.lower(), escape="\\")
+                    | func.lower(SummaryTranslation.summary).like(pattern.lower(), escape="\\")
+                    | func.lower(SummaryTranslation.why_it_matters).like(
+                        pattern.lower(), escape="\\"
+                    )
+                )
+                .order_by(Summary.created_at.desc())
+            )
+        ).all()
+        for translation, summary in translated_rows:
+            if _valid_translation(summary, translation):
+                valid_translations[summary.id] = translation
+                translation_ids.append(summary.id)
+
+    # Historical summary prose remains as stored. A summary reused by any new
+    # bilingual publication follows the new projection for search as well.
+    candidate_ids = set(canonical_ids) | set(translation_ids)
+    if candidate_ids:
+        legacy_ids = set(
+            (
+                await session.execute(
+                    select(BulletinItem.summary_id)
+                    .join(Bulletin, Bulletin.id == BulletinItem.bulletin_id)
+                    .where(BulletinItem.summary_id.in_(candidate_ids))
+                    .where(Bulletin.bilingual.is_(False))
+                )
+            ).scalars()
         )
-    ).scalar_one()
-    hits = (
-        await session.execute(
-            text(
-                "SELECT rowid FROM summaries_fts WHERE summaries_fts MATCH :q "
-                "ORDER BY rank LIMIT :limit"
-            ),
-            {"q": expression, "limit": limit},
+        bilingual_ids = set(
+            (
+                await session.execute(
+                    select(BulletinItem.summary_id)
+                    .join(Bulletin, Bulletin.id == BulletinItem.bulletin_id)
+                    .where(BulletinItem.summary_id.in_(candidate_ids))
+                    .where(Bulletin.bilingual.is_(True))
+                )
+            ).scalars()
         )
-    ).scalars()
-    ids = list(hits)
+        legacy_ids.difference_update(bilingual_ids)
+    else:
+        legacy_ids = set()
+
+    ids = list(dict.fromkeys([*canonical_ids, *translation_ids]))
+    total = len(ids)
+    ids = ids[:limit]
     if not ids:
         return Page(rows=[], total=total, limit=limit)
 
@@ -579,11 +720,27 @@ async def search_stories(
             .order_by(Summary.created_at.desc())
         )
     ).all()
+    translations = await _translations_for(session, set(ids))
+    translations.update(valid_translations)
+    by_id = {
+        summary.id: (summary, article, name, verdict) for summary, article, name, verdict in rows
+    }
 
     return Page(
         rows=[
-            _to_story(summary, article, name, relative_age(article.published_at, language), verdict)
-            for summary, article, name, verdict in rows
+            _to_story(
+                summary,
+                article,
+                name,
+                relative_age(article.published_at, language),
+                verdict,
+                translation=translations.get(summary_id),
+                language=language,
+                legacy=summary_id in legacy_ids,
+            )
+            for summary_id in ids
+            if (row := by_id.get(summary_id)) is not None
+            for summary, article, name, verdict in [row]
         ],
         total=total,
         limit=limit,
@@ -781,9 +938,8 @@ class Finding:
     """One summary the grounding judge failed, and whether the reader has answered.
 
     The judge's most information-dense output - the sentence it could not
-    support - was written to `eval_results.detail`, printed once by the command
-    that produced it, and never put in front of the person whose verdict it is
-    calibrated against. This is that row, shaped for `/runs/verdicts`.
+    support - is shown beside its source story so the reader can inspect the
+    claim and record a wrong-only category with an optional note.
     """
 
     summary_id: int
@@ -1005,8 +1161,6 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
         share_row(t["quality_key_fact"], content.get("key_fact_share")),
         share_row(t["quality_key_fact_kept"], content.get("key_fact_kept")),
         share_row(t["quality_numeral_recall"], content.get("numeral_recall")),
-        # Drawn as "kept the budget" rather than "went over it", so every bar on
-        # the block fills in the same direction and a long bar is always good.
         count_row(
             t["quality_budget"],
             over_count.get("summary"),
