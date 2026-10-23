@@ -2,8 +2,8 @@
 project_id: search-agent
 implementation_agent: codex
 branch: codex/issues-integration
-as_of: 327f178
-active_milestone: issues-wave1
+as_of: 78e214c
+active_milestone: issues-wave2
 active_run: docs/runs/2026-10-23_issues.md
 ---
 # Current state
@@ -12,15 +12,16 @@ active_run: docs/runs/2026-10-23_issues.md
 
 | ID | Status | Evidence | Commit |
 |---|---|---|---|
-| issues-wave1 | IN_PROGRESS | Runtime safety #2/#5, eval/feedback #4/#7/#8/#9, model #11; docs/coordination/issues-2026-10.md | — |
-| issues-wave2 | PLANNED | Bilingual publication #10 and topic counts #3 | — |
+| issues-wave1 | OPEN_GATE | Combined offline suite passed; review follow-ups cover failed-run accounting and complete legacy quality display | 0b22edb |
+| issues-wave2 | IN_PROGRESS | Frozen schema/read contract and independent H01-H19 pack; isolated pipeline/read builders | 0230bcc |
 | delivery | PLANNED | Independent acceptance, integration review, CI, PR merge and issue closure | — |
 
 ## Open gates
 
-- Wave-1 independent scenarios landed; their integrated execution is still open.
-- Bilingual schema/read contract must be frozen before wave 2.
-- Full combined tests, review and GitHub CI must pass before delivery.
+- The quality follow-up must retain missing agreement and every keep-list signal on legacy run detail.
+- Failed paid work must reach the run cost total before the report can close #4.
+- Complete bilingual publication, read projection and matching relevant topic predicates.
+- Full combined tests, H01-H19 without skips, independent review and GitHub CI must pass before delivery.
 
 ## Blockers
 
@@ -28,4 +29,4 @@ None. The owner waived the other-runtime requirement for the independent author.
 
 ## Next
 
-Dispatch the three isolated wave-1 lanes from the committed acceptance base.
+Integrate the schema and pipeline before the read lane, then execute all independent scenarios and deliver the verified PR.
