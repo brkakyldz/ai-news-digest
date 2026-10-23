@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from ainews.cli import _utf8_stdio
 
 
@@ -37,3 +39,11 @@ def test_utf8_stdio_makes_an_unencodable_character_printable(monkeypatch):
     stream.flush()
 
     assert stream.encoding == "utf-8"
+
+
+def test_rank_stability_command_is_removed_without_dispatch(monkeypatch):
+    from ainews.cli import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["eval", "rank-stability"])
+    assert exc.value.code == 2

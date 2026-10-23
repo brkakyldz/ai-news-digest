@@ -145,7 +145,6 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "open_source": "Kaynağa git",
         # The reader's verdict on a summary (PLAN-EVALS E2). Two words, no
         # question mark: they sit on the foot line beside the other actions.
-        "verdict_ok": "Doğru",
         "verdict_wrong": "Yanlış",
         "verdict_note": "Neyi yanlış yaptı? (isteğe bağlı)",
         "verdict_save": "Kaydet",
@@ -174,6 +173,7 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
             "çalıştır düğmesi bir anahtar olmadan çalışmaz."
         ),
         "quality_heading": "Bu bültenin ölçümleri",
+        "quality_agreement": "Editörlerin uyumu",
         "quality_lead": "Hepsi ücretsiz, baskının kendisi hesapladı.",
         "quality_key_fact": "Haberi haber yapan şeyi adlandırdı",
         "quality_key_fact_kept": "Ve bunu özete taşıdı",
@@ -182,17 +182,14 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "quality_vocabulary": "Etiketler ortak sözlükten",
         "quality_ungrounded": "Metinde olmayan rakam taşıyan haber",
         "quality_na": "yok",
-        "verdicts_labelled": "Karar verilen",
+        "verdicts_labelled": "Yanlış işaretlenen",
         # `/runs/verdicts`: the labels themselves, under the count. The summary
         # line states the two figures the count states and no third one - what
         # counts as "enough" labels is a constant in `evals/judge.py` and this
         # layer does not import it (ADR 0019 §2).
         "verdicts_heading": "Okurun kararları",
-        "verdicts_summary": "{n} / {total} habere karar verildi · {w} tanesine “yanlış” dendi",
-        "verdicts_empty": (
-            "Henüz bir habere karar verilmedi. Bir özetin altındaki Doğru · Yanlış "
-            "bu listeyi doldurur."
-        ),
+        "verdicts_summary": "{w} haber yanlış olarak işaretlendi",
+        "verdicts_empty": "Henüz bir haber yanlış olarak işaretlenmedi.",
         "col_story": "Haber",
         "col_verdict": "Karar",
         # The judge's findings on the same page, above the labels. The sentence
@@ -392,7 +389,6 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "impact_low": "Low impact",
         # "Open source" alone is the licensing term; the label is an instruction.
         "open_source": "Go to source",
-        "verdict_ok": "Right",
         "verdict_wrong": "Wrong",
         "verdict_note": "What did it get wrong? (optional)",
         "verdict_save": "Save",
@@ -408,6 +404,7 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
             "the run button does nothing without one."
         ),
         "quality_heading": "What this bulletin measured",
+        "quality_agreement": "Production agreement",
         "quality_lead": "All of it free, computed by the press itself.",
         "quality_key_fact": "Named the thing that made it news",
         "quality_key_fact_kept": "And carried it into the summary",
@@ -416,13 +413,11 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "quality_vocabulary": "Tags from the shared vocabulary",
         "quality_ungrounded": "Stories with a figure the text lacks",
         "quality_na": "none",
-        "verdicts_labelled": "With a verdict",
+        "verdicts_labelled": "Marked wrong",
         # See the note on the Turkish block.
         "verdicts_heading": "The reader's verdicts",
-        "verdicts_summary": "{n} of {total} stories have a verdict · {w} called wrong",
-        "verdicts_empty": (
-            "No story carries a verdict yet. The Right · Wrong under a summary fills this list."
-        ),
+        "verdicts_summary": "{w} stories marked wrong",
+        "verdicts_empty": "No story has been marked wrong yet.",
         "col_story": "Story",
         "col_verdict": "Verdict",
         "findings_heading": "Sentences the judge could not support",

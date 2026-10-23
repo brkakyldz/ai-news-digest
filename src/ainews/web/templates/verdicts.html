@@ -28,26 +28,11 @@
     <a class="back" href="/runs?lang={{ language }}">{{ t.back_to_runs }}</a>
   </section>
 
-  {# The same two figures `/runs` states, in the sentence they came here from.
-     No third number about calibration: the threshold that decides when these
-     labels are enough lives in `evals/judge.py`, which this layer does not
-     import and must not restate (ADR 0019 §2). #}
+  {# The count names the active wrong-feedback annotations shown below. #}
   <p class="labels__s">{{ t.verdicts_summary.format(n=verdicts.labelled, total=verdicts.total, w=verdicts.wrong) }}</p>
 
-  {# What the judge could not support, with the two words under each. Since
-     2026-09-08. The judge's failures are the most informative thing the
-     evaluation layer produces - each is a sentence a stronger model says the
-     article does not back - and they had been printed once at a terminal and
-     filed in `docs/evals.md`, where the reader whose verdict calibrates the
-     judge never saw them. Answering one here is one label that measures the
-     judge's precision directly (`evals/judge.py`), and precision is the number
-     a tool with one reader acts on: not "did the judge miss something", which
-     takes hundreds of labels to know, but "when it raises its hand, is it
-     right".
-
-     The same table recipe as the labels below, one column for the claim. The
-     claim is the model's sentence quoted back, so it keeps the body face like
-     the reader's note does; it is what the reader is being asked to judge. #}
+  {# The judge findings are shown beside their story address. A wrong action
+     remains available when a finding needs reader feedback. #}
   <section class="ph"><h2>{{ t.findings_heading }}</h2></section>
   <p class="labels__s">{{ t.findings_summary.format(n=findings|length, a=n_answered) }}</p>
   <div class="panel">

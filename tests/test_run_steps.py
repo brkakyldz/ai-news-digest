@@ -356,8 +356,11 @@ async def test_the_run_page_shows_what_the_press_measured(
         await session.execute(select(Bulletin).where(Bulletin.run_id == run.id))
     ).scalar_one()
     assert bulletin.checks_json, "the press wrote them"
+    bulletin.agreement = None
+    await session.commit()
 
     body = client.get(f"/runs/{run.id}?lang=en").text
+    assert "Production agreement" in body and "n/a" in body
     assert "What this bulletin measured" in body
     assert "Named the thing that made it news" in body
     assert "Summary kept the word budget" in body

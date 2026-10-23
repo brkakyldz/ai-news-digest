@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ainews.clock import day_bounds, to_local
@@ -219,9 +219,9 @@ def _to_story(
         age=age,
         tier=item.tier if item else None,
         reason=item.reason if item else None,
-        verdict=verdict.verdict if verdict else None,
-        verdict_reason=verdict.reason if verdict else None,
-        verdict_note=verdict.note if verdict else None,
+        verdict=verdict.verdict if verdict and verdict.verdict == "wrong" else None,
+        verdict_reason=verdict.reason if verdict and verdict.verdict == "wrong" else None,
+        verdict_note=verdict.note if verdict and verdict.verdict == "wrong" else None,
     )
 
 
@@ -672,49 +672,22 @@ async def recent_activity(session: AsyncSession, n_days: int = 7) -> Activity:
 
 @dataclass(slots=True)
 class VerdictProgress:
-    """How many summaries carry the reader's own call on them.
-
-    The only eval number the interface can move. Everything else in
-    `PLAN-EVALS.md` is produced by spending money at a terminal; a label is
-    produced by a person reading a story and pressing a word, and nothing in the
-    app had ever mentioned that the count exists.
-
-    It matters because the calibration half of the evaluation plan is parked
-    behind it. `judge.calibrate` computes TPR against `wrong` labels and TNR
-    against `ok` ones; `judge_labelled` refuses to trust a class under thirty,
-    and E5 gates the judge-prompt rewrite on 100. With three labels and no
-    `wrong` among them, TPR has no denominator at all.
-
-    Read straight off `verdicts` and `summaries` - two tables `db/models.py`
-    owns and the web layer already reads. Nothing from `evals/` is imported,
-    which is ADR 0019 §2: a recorded measurement is not a measurement being
-    made.
-    """
+    """How many summaries carry active wrong feedback."""
 
     labelled: int
     wrong: int
     total: int
 
-    @property
-    def ok(self) -> int:
-        return self.labelled - self.wrong
-
 
 async def verdict_progress(session: AsyncSession) -> VerdictProgress:
-    """One row of counts. Never divides, so an empty database is not a case."""
-    labelled, wrong = (
-        await session.execute(
-            select(
-                func.count(Verdict.id),
-                func.count(case((Verdict.verdict == "wrong", 1))),
-            )
-        )
-    ).one()
-    # Every summary that has ever been written, not just today's: a reader
-    # labelling an archived story is doing exactly the work the judge needs, and
-    # a denominator that shrank overnight would be a number that goes backwards.
-    total = (await session.execute(select(func.count(Summary.id)))).scalar_one()
-    return VerdictProgress(labelled=labelled, wrong=wrong, total=total)
+    """Count only active wrong feedback; legacy positive rows are ignored."""
+    wrong = int(
+        (
+            await session.execute(select(func.count(Verdict.id)).where(Verdict.verdict == "wrong"))
+        ).scalar_one()
+    )
+    total = int((await session.execute(select(func.count(Summary.id)))).scalar_one())
+    return VerdictProgress(labelled=wrong, wrong=wrong, total=total)
 
 
 def _home_bulletin() -> Any:
@@ -762,13 +735,8 @@ class LabelledStory:
 async def labelled_stories(session: AsyncSession, limit: int = 200) -> Page[LabelledStory]:
     """Every verdict the reader has given, newest press first.
 
-    Both words, not only `wrong`. The count this page hangs off says "karar
-    verilen 4/118", so a list that answered with two rows would be a second
-    number disagreeing with the first one - and the calibration the labels are
-    for needs both classes, TPR against `wrong` and TNR against `ok`
-    (`evals/judge.py`). The notes are what E5 rewrites a prompt from and they
-    only ever sit on a `wrong`, which is why that column is mostly a dash and
-    that is not a fault in it.
+    Only active `wrong` feedback is listed. Historical `ok` rows remain in the
+    database but no longer count as an action or appear on this page.
 
     Sorted by when the verdict was given rather than by what it says. It is the
     first column, it is a log, and a hidden "wrong first" rule would make the
@@ -779,13 +747,16 @@ async def labelled_stories(session: AsyncSession, limit: int = 200) -> Page[Labe
         await session.execute(
             select(Verdict, Summary, Source.name, _home_bulletin().label("bulletin_id"))
             .join(Summary, Summary.id == Verdict.summary_id)
+            .where(Verdict.verdict == "wrong")
             .join(Article, Article.id == Summary.article_id)
             .join(Source, Source.id == Article.source_id)
             .order_by(Verdict.created_at.desc())
             .limit(limit)
         )
     ).all()
-    total = (await session.execute(select(func.count(Verdict.id)))).scalar_one()
+    total = (
+        await session.execute(select(func.count(Verdict.id)).where(Verdict.verdict == "wrong"))
+    ).scalar_one()
     return Page(
         rows=[
             LabelledStory(
@@ -863,7 +834,7 @@ async def judge_findings(session: AsyncSession, limit: int = 200) -> list[Findin
                 source=source_name,
                 title_local=summary.title_local,
                 claim=result.detail,
-                verdict=verdict.verdict if verdict else None,
+                verdict=verdict.verdict if verdict and verdict.verdict == "wrong" else None,
             )
         )
         if len(findings) == limit:
@@ -962,6 +933,7 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
     budget = stored.get("budget") or {}
     over = (budget.get("over_share") or {}).get("summary")
     tags = stored.get("tags") or {}
+    agreement = "n/a" if bulletin.agreement is None else f"{bulletin.agreement:.2f}"
 
     def share_row(label: str, value: float | None, *, invert: bool = False) -> QualityRow:
         """`invert` turns a share that went wrong into the share that went right.
@@ -976,6 +948,7 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
         return QualityRow(label, f"{shown:.0%}", shown)
 
     return [
+        QualityRow(t["quality_agreement"], agreement),
         share_row(t["quality_key_fact"], content.get("key_fact_share")),
         share_row(t["quality_key_fact_kept"], content.get("key_fact_kept")),
         share_row(t["quality_numeral_recall"], content.get("numeral_recall")),

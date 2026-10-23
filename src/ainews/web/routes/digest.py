@@ -204,8 +204,8 @@ async def post_verdict(
     would be a story card inside a table.
     """
     language = language_of(request)
-    if verdict not in ("ok", "wrong"):
-        raise HTTPException(status_code=422, detail="verdict is 'ok' or 'wrong'")
+    if verdict != "wrong":
+        raise HTTPException(status_code=422, detail="verdict is 'wrong'")
     if reason is not None and reason not in VERDICT_REASONS:
         raise HTTPException(status_code=422, detail=f"reason is one of {VERDICT_REASONS}")
     if await session.get(Summary, summary_id) is None:

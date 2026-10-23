@@ -61,30 +61,32 @@ def test_the_digest_offers_a_verdict_on_every_story(
 ) -> None:
     body = client.get("/").text
     assert body.count('class="vd"') == 2
-    assert body.count('hx-post="/verdict?lang=tr"') == 4, "two words per story"
+    assert body.count('hx-post="/verdict?lang=tr"') == 2, "one wrong-feedback action per story"
     assert 'aria-pressed="true"' not in body, "nothing is chosen until the reader chooses"
     # Written in both states, so the word reads as a toggle before it is pressed.
-    assert body.count('aria-pressed="false"') == 4
-    assert "Doğru" in body and "Yanlış" in body
+    assert body.count('aria-pressed="false"') == 2
+    assert "Yanlış" in body and "Doğru" not in body
 
 
 async def test_posting_creates_a_row_and_answers_with_the_fragment_not_a_redirect(
     client: TestClient, summaries: list[int], session: AsyncSession
 ) -> None:
-    response = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+    response = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "wrong"})
     assert response.status_code == 200
     assert response.headers.get("location") is None
     assert f'id="foot-{summaries[0]}"' in response.text
     assert 'aria-pressed="true"' in response.text
 
     rows = await _rows(session)
-    assert [(r.summary_id, r.verdict, r.note) for r in rows] == [(summaries[0], "ok", None)]
+    assert [(r.summary_id, r.verdict, r.note) for r in rows] == [(summaries[0], "wrong", None)]
 
 
 async def test_posting_twice_overwrites_rather_than_accumulates(
     client: TestClient, summaries: list[int], session: AsyncSession
 ) -> None:
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+    client.post(
+        "/verdict", data={"summary_id": summaries[0], "verdict": "wrong", "note": "ilk not"}
+    )
     client.post(
         "/verdict", data={"summary_id": summaries[0], "verdict": "wrong", "note": "500 bin yok"}
     )
@@ -93,13 +95,25 @@ async def test_posting_twice_overwrites_rather_than_accumulates(
     assert (rows[0].verdict, rows[0].note) == ("wrong", "500 bin yok")
 
 
-async def test_a_note_is_kept_only_with_wrong(
+async def test_historical_ok_row_has_no_positive_action_on_the_story(
+    client: TestClient, summaries: list[int], session: AsyncSession
+) -> None:
+    session.add(Verdict(summary_id=summaries[0], verdict="ok"))
+    await session.commit()
+    body = client.get("/?all=1").text
+    assert '"verdict": "ok"' not in body
+    assert "Doğru" not in body
+    assert body.count('hx-post="/verdict?lang=tr"') == 2
+
+
+async def test_ok_post_is_rejected_without_changing_existing_wrong_feedback(
     client: TestClient, summaries: list[int], session: AsyncSession
 ) -> None:
     client.post("/verdict", data={"summary_id": summaries[0], "verdict": "wrong", "note": "x"})
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok", "note": "stale"})
+    response = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+    assert response.status_code == 422
     rows = await _rows(session)
-    assert (rows[0].verdict, rows[0].note) == ("ok", None)
+    assert (rows[0].verdict, rows[0].note) == ("wrong", "x")
 
 
 async def test_pressing_wrong_again_does_not_erase_the_note(
@@ -156,18 +170,14 @@ def test_the_fragment_swapped_in_after_a_press_carries_the_mark(
     client: TestClient, summaries: list[int]
 ) -> None:
     """HTMX replaces the foot, not the page: the mark has to come back with it."""
-    text = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"}).text
+    text = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "wrong"}).text
     assert 'aria-pressed="true"' in text
 
 
-def test_wrong_opens_the_note_row_and_ok_closes_it(
-    client: TestClient, summaries: list[int]
-) -> None:
+def test_wrong_opens_the_optional_note_row(client: TestClient, summaries: list[int]) -> None:
     wrong = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "wrong"}).text
     assert 'class="vd-note"' in wrong
-    assert "Kaydedildi" not in wrong, "nothing was saved in the note yet"
-    ok = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"}).text
-    assert 'class="vd-note"' not in ok
+    assert "Kaydedildi" not in wrong
 
 
 def test_saving_a_note_says_so(client: TestClient, summaries: list[int]) -> None:
@@ -224,19 +234,19 @@ async def test_pressing_wrong_again_does_not_erase_the_reason(
     assert row.reason == "duplicate"
 
 
-async def test_right_clears_the_reason_with_the_note(
+async def test_ok_post_is_rejected_and_preserves_reason(
     client: TestClient, session: AsyncSession, summaries: list[int]
 ) -> None:
     client.post(
         "/verdict",
         data={"summary_id": summaries[0], "verdict": "wrong", "reason": "wrong_place"},
     )
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
-
+    response = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
     row = (
         await session.execute(select(Verdict).where(Verdict.summary_id == summaries[0]))
     ).scalar_one()
-    assert (row.verdict, row.reason, row.note) == ("ok", None, None)
+    assert response.status_code == 422
+    assert (row.verdict, row.reason, row.note) == ("wrong", "wrong_place", None)
 
 
 def test_a_reason_that_is_not_one_of_the_four_is_refused(
@@ -251,12 +261,10 @@ def test_a_reason_that_is_not_one_of_the_four_is_refused(
 def test_a_verdict_on_a_summary_that_does_not_exist_is_a_404(
     client: TestClient, summaries: list[int]
 ) -> None:
-    assert client.post("/verdict", data={"summary_id": 9999, "verdict": "ok"}).status_code == 404
+    assert client.post("/verdict", data={"summary_id": 9999, "verdict": "wrong"}).status_code == 404
 
 
-def test_a_verdict_that_is_neither_word_is_refused(
-    client: TestClient, summaries: list[int]
-) -> None:
+def test_a_verdict_that_is_not_wrong_is_refused(client: TestClient, summaries: list[int]) -> None:
     response = client.post("/verdict", data={"summary_id": summaries[0], "verdict": "meh"})
     assert response.status_code == 422
 
@@ -280,10 +288,10 @@ def test_the_runs_page_says_how_many_summaries_carry_a_verdict(
     anything is labelled: "0 / 2" is the sentence that says the count exists."""
     body = client.get("/runs?lang=tr").text
 
-    assert "Karar verilen" in body
+    assert "Yanlış işaretlenen" in body
     assert "0<small> / 2</small>" in body
 
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "wrong"})
     assert "1<small> / 2</small>" in client.get("/runs?lang=tr").text
 
 
@@ -295,8 +303,8 @@ def test_the_counter_states_a_number_and_nothing_else(
     reader owes it, and this test is what keeps the next pass from adding one."""
     body = client.get("/runs?lang=en").text
 
-    assert "With a verdict" in body
-    assert "100" not in body.split("With a verdict", 1)[1][:400]
+    assert "Marked wrong" in body
+    assert "100" not in body.split("Marked wrong", 1)[1][:400]
     assert "progress" not in body
 
 
@@ -308,22 +316,21 @@ async def test_a_database_with_no_summaries_still_renders_the_counter(
     from ainews.web import queries
 
     progress = await queries.verdict_progress(session)
-    assert (progress.labelled, progress.wrong, progress.total, progress.ok) == (0, 0, 0, 0)
+    assert (progress.labelled, progress.wrong, progress.total) == (0, 0, 0)
     assert "0<small> / 0</small>" in client.get("/runs?lang=en").text
 
 
-async def test_the_counter_tells_the_two_labels_apart(
+async def test_the_counter_ignores_legacy_ok_rows(
     client: TestClient, summaries: list[int], session: AsyncSession
 ) -> None:
-    """`wrong` is the class the judge's TPR has no denominator without, so it is
-    counted separately even though V1 draws only the total (PLAN-EVALS E5)."""
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+    session.add(Verdict(summary_id=summaries[0], verdict="ok"))
+    await session.commit()
     client.post("/verdict", data={"summary_id": summaries[1], "verdict": "wrong", "note": "yok"})
 
     from ainews.web import queries
 
     progress = await queries.verdict_progress(session)
-    assert (progress.labelled, progress.wrong, progress.ok) == (2, 1, 1)
+    assert (progress.labelled, progress.wrong, progress.total) == (1, 1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -348,21 +355,21 @@ def test_the_labels_page_lists_a_verdict_with_its_note(
     assert "OpenAI" in body
 
 
-def test_the_labels_page_lists_both_words(client: TestClient, summaries: list[int]) -> None:
-    """Not only the `wrong` ones: the count this page hangs off says 2/2, and a
-    list of one row would be a second number disagreeing with the first."""
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+async def test_the_labels_page_ignores_historical_ok_rows(
+    client: TestClient, summaries: list[int], session: AsyncSession
+) -> None:
+    session.add(Verdict(summary_id=summaries[0], verdict="ok"))
+    await session.commit()
     client.post("/verdict", data={"summary_id": summaries[1], "verdict": "wrong", "note": "yok"})
     body = client.get("/runs/verdicts").text
-    assert body.count('class="verdict') == 2
-    assert body.count('class="verdict bad"') == 1, "only the wrong one takes ink"
-    assert "—" in body, "a verdict with no reason says so rather than leaving a hole"
+    assert body.count('class="verdict') == 1
+    assert "Haber 1" in body and "Haber 0" not in body
 
 
 def test_the_newest_press_is_first(client: TestClient, summaries: list[int]) -> None:
     """The first column is when the verdict was given, so the sort is that and
     not "wrong first" - a hidden rule would make the times read as unsorted."""
-    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "ok"})
+    client.post("/verdict", data={"summary_id": summaries[0], "verdict": "wrong"})
     client.post("/verdict", data={"summary_id": summaries[1], "verdict": "wrong"})
     body = client.get("/runs/verdicts").text
     assert body.index("Haber 1") < body.index("Haber 0")
@@ -427,7 +434,7 @@ def test_the_labels_page_says_so_when_nothing_has_been_judged(
     client: TestClient, summaries: list[int]
 ) -> None:
     body = client.get("/runs/verdicts?lang=en").text
-    assert "No story carries a verdict yet" in body
+    assert "No story has been marked wrong yet" in body
     assert "<table" not in body, "no column headings over an empty list"
 
 

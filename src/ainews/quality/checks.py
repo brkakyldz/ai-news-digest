@@ -22,9 +22,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from ainews.pipeline.nodes.dedupe import normalize_title, titles_match
 from ainews.pipeline.prompts import TAG_VOCABULARY
-from ainews.pipeline.state import TIER_ORDER
 
 Story = dict[str, Any]
 
@@ -206,8 +204,8 @@ def _content_tokens(text: str) -> set[str]:
 def content_floor(stories: list[Story]) -> dict[str, Any]:
     """Does the writing carry anything concrete, or only the right shape.
 
-    Every other check here measures shape - word budgets, sentence counts, tag
-    spread, score distribution, note paragraph lengths. A regression to three
+    The word-budget and tag checks measure shape, while the content floor tests
+    whether the summary kept specific facts from its source. A regression to three
     generic numberless sentences at importance 3 clears all of them, and clears
     the numeral check (no figure to flag) and the grounding judge (no claim to
     disagree with) as well. The 2026-09-06 run was already 70% threes.
@@ -262,33 +260,23 @@ def content_floor(stories: list[Story]) -> dict[str, Any]:
 
 # -- format budgets -----------------------------------------------------------
 
-_SENTENCE_END = re.compile(r"[.!?…](?:\s|$)")
-
 
 def word_count(text: str) -> int:
     return len((text or "").split())
 
 
-def sentence_count(text: str) -> int:
-    return len(_SENTENCE_END.findall((text or "").strip())) or (1 if (text or "").strip() else 0)
-
-
 def word_budget(stories: list[Story]) -> dict[str, Any]:
-    """Share of stories over each field's word budget, and the summary's
-    sentence-count histogram."""
+    """Share of stories over each field's prompt word budget."""
     n = len(stories)
     over = dict.fromkeys(WORD_BUDGET, 0)
-    sentences: Counter[int] = Counter()
     for story in stories:
         for field, budget in WORD_BUDGET.items():
             if word_count(story.get(field, "")) > budget:
                 over[field] += 1
-        sentences[sentence_count(story.get("summary", ""))] += 1
     return {
         "n": n,
         "over_share": {field: (count / n if n else 0.0) for field, count in over.items()},
         "over_count": over,
-        "sentences": dict(sorted(sentences.items())),
     }
 
 
@@ -328,102 +316,8 @@ def importance_distribution(stories: list[Story]) -> dict[int, float]:
 # -- ranking ------------------------------------------------------------------
 
 
-def fallback_order(stories: list[Story], top_n: int) -> list[int]:
-    """What `rank.py` does without the model: importance, then source weight."""
-    ordered = sorted(
-        stories,
-        key=lambda s: (int(s.get("importance", 0)), float(s.get("weight", 1.0))),
-        reverse=True,
-    )
-    return [int(s["article_id"]) for s in ordered[:top_n]]
-
-
 def ranked_order(stories: list[Story]) -> list[int]:
     """The published order, by article id. `position` is the editor's placement
     (ADR 0030); a story with none was not in the bulletin."""
     ranked = [s for s in stories if s.get("position") is not None]
     return [int(s["article_id"]) for s in sorted(ranked, key=lambda s: int(s["position"]))]
-
-
-def ranker_vs_fallback(stories: list[Story], top_n: int | None = None) -> dict[str, Any]:
-    """How much the rank call changed against the free ordering.
-
-    Reported, never asserted: an overlap equal to `top_n` on most runs means the
-    rank call buys nothing (E5 trigger, "delete the rank call"); a low one means
-    the model is doing something, which is not the same as doing it well.
-    """
-    ranked = ranked_order(stories)
-    n = top_n if top_n is not None else len(ranked)
-    fallback = fallback_order(stories, n)
-    overlap = len(set(ranked[:n]) & set(fallback))
-    return {"top_n": n, "overlap": overlap, "ranked": ranked[:n], "fallback": fallback}
-
-
-def tier_shape(stories: list[Story]) -> dict[str, Any]:
-    """How the editor distributed the tiers, and how far it read against the
-    summariser.
-
-    Reported, never asserted. The ranker answers with a placement and not with
-    a corrected score (ADR 0030), so what there is to measure is where it put
-    things. Two questions are worth asking of that.
-
-    `counts` says whether the vocabulary is being used. A bulletin that is
-    fifteen `notable` is a ranker filling a page, and the same finding
-    `ranker_vs_fallback` reports from the other side.
-
-    `contradictions` counts pairs the editor put in the opposite order to the
-    summariser's own score - a 3 tiered above a 5. Some of that is the whole
-    point of having an editor; all of it would mean the two are not reading the
-    same thing.
-    """
-    ranked = sorted(
-        (s for s in stories if s.get("position") is not None),
-        key=lambda s: int(s["position"]),
-    )
-    counts = dict.fromkeys(TIER_ORDER, 0)
-    for story in ranked:
-        tier = story.get("tier")
-        if tier in counts:
-            counts[tier] += 1
-    contradictions = sum(
-        1
-        for i, earlier in enumerate(ranked)
-        for later in ranked[i + 1 :]
-        if int(earlier.get("importance", 0)) < int(later.get("importance", 0))
-    )
-    pairs = len(ranked) * (len(ranked) - 1) // 2
-    return {
-        "n_ranked": len(ranked),
-        "counts": counts,
-        "contradictions": contradictions,
-        "contradiction_share": (contradictions / pairs) if pairs else 0.0,
-    }
-
-
-def unrepresented_fives(stories: list[Story], threshold: int = 85) -> list[int]:
-    """Importance-5 stories with no ranked story in their cluster.
-
-    A cluster is what the dedupe step would have merged: two titles that
-    `titles_match` under the production threshold. A five that the ranker
-    passed over in favour of another outlet's write-up of the same event is
-    represented; a five nobody in its cluster carries into the digest is not.
-    """
-    ranked = [s for s in stories if s.get("position") is not None]
-    ranked_titles = [normalize_title(s.get("title") or "") for s in ranked]
-    missing: list[int] = []
-    for story in stories:
-        if int(story.get("importance", 0)) != 5 or story.get("position") is not None:
-            continue
-        title = normalize_title(story.get("title") or "")
-        if any(titles_match(title, other, threshold) for other in ranked_titles):
-            continue
-        missing.append(int(story["article_id"]))
-    return missing
-
-
-# -- the editor's note --------------------------------------------------------
-
-
-def editor_note_shape(note: str | None) -> dict[str, Any]:
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", (note or "").strip()) if p.strip()]
-    return {"paragraphs": len(paragraphs), "words": [word_count(p) for p in paragraphs]}
