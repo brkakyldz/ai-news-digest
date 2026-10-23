@@ -1,11 +1,9 @@
-# October issue acceptance holdout
+# October issue acceptance holdout, wave 2
 
-Author: GPT-6 Luna. The human explicitly approved this same-runtime authoring exception. Authored 2026-10-23 without inspecting product code, tests, operator configuration, or secrets.
+Author: GPT-6 Luna. The human explicitly approved this same-runtime authoring exception. Authored 2026-10-23 from the frozen contracts only, without inspecting product code, source, tests, operator configuration, or secrets.
 
-Pack path: `C:/scratch/2026-10-23_search-agent-issues/acceptance-wave1`.
+Pack path: `C:/scratch/2026-10-23_search-agent-issues/acceptance-wave2`.
 
-The default test-suite collection skips these integrated scenarios unless `AINEWS_RUN_ACCEPTANCE=1`. `run_acceptance.py` sets that flag, launches pytest against this pack, writes JUnit XML outside the repository, and fails if all ten scenarios do not execute with zero skips. Use `C:/search_agent/.venv/Scripts/python.exe C:/scratch/2026-10-23_search-agent-issues/acceptance-wave1/run_acceptance.py` for the explicit holdout run.
+This pack adds H11–H19 to the ten wave-one scenarios. The final holdout is flat under `tests/acceptance/holdout`; its shared `run_acceptance.py` and `verify.json` require all nineteen scenarios to execute with zero skips.
 
-The tests use subprocess CLI calls, loopback HTTP, and temporary SQLite databases. The subprocess launcher imports the CLI only inside the child process. Each test creates a temporary checkout-shaped directory containing a copy of `src`, sets explicit dummy credentials, model settings, timezone, scheduler, tracing, and demo values, and disables seeded sources after initialization. This keeps project-relative operator configuration out of fixtures. No test invokes provider work.
-
-The holdout covers visible refusal and preservation behavior for prune, but does not claim to prove SQLite transaction interleaving. It checks confirmation model selection, but does not inspect outbound provider request parameters. Those properties have no stable public pause or inspection surface under the supplied contract and belong to the focused transport/config checks.
+The local OpenAI-compatible provider is an external dependency stand-in implemented with Python's standard HTTP server. It dispatches by `response_format.json_schema.name`, records requests and token usage, returns deterministic structured JSON for ArticleSummary, RankedDigest, StoryTranslation and EditorialTranslation, and can return incomplete editorial output once. It does not import or replace product functions. The tests send only loopback OpenAI requests, use dummy credentials, disable seeded sources after the documented sources sync, leave Tavily disabled, and put databases, provider traffic, logs and JUnit output in temporary paths.

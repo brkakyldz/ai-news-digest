@@ -1,7 +1,8 @@
-"""Explicitly run the integrated holdout and require all ten scenarios to execute."""
+"""Explicitly run the integrated holdout and require every expected scenario to execute."""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPORT = Path(r"C:/scratch/2026-10-23_search-agent-issues/holdout.xml")
+VERIFY = HERE / "verify.json"
 
 
 def main() -> int:
@@ -39,10 +41,22 @@ def main() -> int:
     failures = sum(
         1 for case in cases if case.find("failure") is not None or case.find("error") is not None
     )
-    if len(cases) != 10 or skipped or failures:
+    expected_list = json.loads(VERIFY.read_text(encoding="utf-8"))["expected"]
+    expected = set(expected_list)
+    present = {
+        scenario
+        for case in cases
+        for scenario in expected
+        if scenario in case.attrib.get("name", "")
+    }
+    missing = sorted(expected - present)
+    if len(cases) != len(expected_list) or skipped or failures or missing:
         print(
-            f"Holdout must execute 10 scenarios with zero skips; got {len(cases)} cases, "
-            f"{skipped} skipped, {failures} failed.",
+            (
+                f"Holdout must execute {len(expected_list)} scenarios with zero skips; "
+                f"got {len(cases)} cases, "
+            ),
+            f"{skipped} skipped, {failures} failed, missing IDs: {missing}.",
             file=sys.stderr,
         )
         return 1
