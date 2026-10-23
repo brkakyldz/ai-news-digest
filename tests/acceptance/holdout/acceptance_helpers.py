@@ -96,6 +96,8 @@ def demo(checkout, tmp_path):
     env = environment(checkout, db, demo=True)
     seeded = run_cli(checkout, db, "demo", "seed", env=env)
     assert seeded.returncode == 0, f"demo seed failed: {seeded.stdout}\n{seeded.stderr}"
+    synced = run_cli(checkout, db, "sources", env=environment(checkout, db))
+    assert synced.returncode == 0, f"source sync failed: {synced.stdout}\n{synced.stderr}"
     disable_sources(db)
     return checkout, db
 
@@ -105,7 +107,7 @@ def disable_sources(db_path: Path) -> None:
         columns = table_columns(db, "sources")
         if "enabled" in columns:
             db.execute('UPDATE sources SET "enabled" = 0')
-        elif "active" in columns:
+        if "active" in columns:
             db.execute('UPDATE sources SET "active" = 0')
         db.commit()
 
@@ -195,7 +197,15 @@ def set_matching_dates(record: dict, value: str) -> None:
             record[name] = value
 
 
-def clone_article_summary(db_path: Path, *, tag: str, relevant: bool, created_at: str, title: str):
+def clone_article_summary(
+    db_path: Path,
+    *,
+    tag: str,
+    relevant: bool,
+    created_at: str,
+    title: str,
+    language: str | None = None,
+):
     with sqlite3_connect(db_path) as db:
         article_id = db.execute("SELECT id FROM articles LIMIT 1").fetchone()[0]
         article = row_dict(db, "articles", "id", article_id)
@@ -218,7 +228,12 @@ def clone_article_summary(db_path: Path, *, tag: str, relevant: bool, created_at
         set_matching_dates(article, created_at)
         insert_record(db, "articles", article)
 
-        summary_id = db.execute("SELECT id FROM summaries LIMIT 1").fetchone()[0]
+        if language is None:
+            summary_id = db.execute("SELECT id FROM summaries LIMIT 1").fetchone()[0]
+        else:
+            summary_id = db.execute(
+                "SELECT id FROM summaries WHERE language = ? LIMIT 1", (language,)
+            ).fetchone()[0]
         summary = row_dict(db, "summaries", "id", summary_id)
         summary_pk = primary_key(db, "summaries")
         new_summary_id = fresh_key(db, "summaries", summary_pk)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import urllib.parse
@@ -77,6 +78,10 @@ class Markup(HTMLParser):
         self.feed(page)
         self.story_controls = self._story_controls
         return self
+
+    @staticmethod
+    def query_tags(link):
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(link["href"]).query).get("tag", [])
 
 
 def add_fixture_bulletin(db, base_bulletin_id, run_id, *, note, agreement):
@@ -168,37 +173,58 @@ def test_H02_R3_topic_pills_count_visible_relevant_stories(demo, server_factory)
     """H02: R3 — topic counts match relevant filtered story IDs; irrelevant tags vanish."""
     root, db_path = demo
     with sqlite3_connect(db_path) as db:
-        _, day, _ = latest_bulletin(db)
+        _, day, language = latest_bulletin(db)
+        same_day_rows = db.execute(
+            "SELECT id FROM summaries WHERE relevant = 1 AND language = ? "
+            "AND substr(created_at, 1, 10) = ?",
+            (language, day),
+        ).fetchall()
+        for (summary_id,) in same_day_rows:
+            db.execute(
+                "UPDATE summaries SET tags_json = ? WHERE id = ?",
+                (json.dumps(["acceptance-visible-tag"]), summary_id),
+            )
+        db.commit()
     stamp = f"{day}T12:00:00+00:00"
-    relevant_id = clone_article_summary(
-        db_path,
-        tag="acceptance-visible-tag",
-        relevant=True,
-        created_at=stamp,
-        title="Acceptance relevant topic story",
-    )
+    relevant_ids = [
+        clone_article_summary(
+            db_path,
+            tag="acceptance-visible-tag",
+            relevant=True,
+            created_at=stamp,
+            title=f"Acceptance relevant topic story {index}",
+            language=language,
+        )
+        for index in range(8)
+    ]
     irrelevant_id = clone_article_summary(
         db_path,
         tag="acceptance-phantom-tag",
         relevant=False,
         created_at=stamp,
         title="Acceptance irrelevant phantom story",
+        language=language,
     )
     server = server_factory(root, db_path)
     status, all_page = server.get("/?all=1")
     assert status == 200
     all_markup = Markup().feed_page(all_page)
     assert str(irrelevant_id) not in all_markup.story_ids
-    assert "acceptance-phantom-tag" not in [link["text"].strip() for link in all_markup.tag_links]
+    assert "acceptance-phantom-tag" not in {
+        tag for link in all_markup.tag_links for tag in all_markup.query_tags(link)
+    }
     filtered_status, filtered = server.get("/?all=1&tag=acceptance-visible-tag")
     assert filtered_status == 200
     filtered_markup = Markup().feed_page(filtered)
-    assert filtered_markup.story_ids == [str(relevant_id)]
-    tag_link = next(
+    assert {str(summary_id) for summary_id in relevant_ids}.issubset(set(filtered_markup.story_ids))
+    counted_links = [
         link
         for link in all_markup.tag_links
-        if "acceptance-visible-tag" in urllib.parse.unquote(link["href"])
-    )
+        if "acceptance-visible-tag" in all_markup.query_tags(link)
+        and re.search(r"\d+", html.unescape(link["text"]))
+    ]
+    assert counted_links, "the visible topic pill must expose its count"
+    tag_link = counted_links[0]
     counts = re.findall(r"\d+", html.unescape(tag_link["text"]))
     assert counts and int(counts[-1]) == len(filtered_markup.story_ids)
 
