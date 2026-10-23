@@ -15,6 +15,8 @@ created and kept in sync by triggers in `ainews.db.schema`, not by the ORM.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -31,6 +33,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     select,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -357,6 +360,16 @@ class Summary(Base):
 
     article: Mapped[Article] = relationship(back_populates="summaries")
 
+    @property
+    def content_hash(self) -> str:
+        """Hash the canonical prose that a cached translation represents."""
+        payload = json.dumps(
+            [self.title_local, self.summary, self.why_it_matters],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     __table_args__ = (
         UniqueConstraint("article_id", "language", name="uq_summary_article_lang"),
         CheckConstraint("importance between 1 and 5", name="ck_summaries_importance"),
@@ -394,6 +407,8 @@ class Bulletin(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
 
     editor_note: Mapped[str | None] = mapped_column(Text, default=None)
+    editor_note_tr: Mapped[str | None] = mapped_column(Text, default=None)
+    bilingual: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     model_rank: Mapped[str | None] = mapped_column(String(60), default=None)
     agreement: Mapped[float | None] = mapped_column(Float, default=None)
     est_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
@@ -442,6 +457,7 @@ class BulletinItem(Base):
     position: Mapped[int] = mapped_column(Integer)
     tier: Mapped[str] = mapped_column(String(10), default="notable")
     reason: Mapped[str | None] = mapped_column(Text, default=None)
+    reason_tr: Mapped[str | None] = mapped_column(Text, default=None)
 
     bulletin: Mapped[Bulletin] = relationship(back_populates="items")
     summary: Mapped[Summary] = relationship()
@@ -452,6 +468,35 @@ class BulletinItem(Base):
             "tier in ('lead', 'major', 'notable', 'brief')", name="ck_bulletin_items_tier"
         ),
         Index("ix_bulletin_items_bulletin", "bulletin_id", "position"),
+    )
+
+
+class SummaryTranslation(Base):
+    """A cached translated view of canonical summary prose."""
+
+    __tablename__ = "summary_translations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    summary_id: Mapped[int] = mapped_column(
+        ForeignKey("summaries.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str] = mapped_column(String(2), nullable=False)
+    title_local: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    why_it_matters: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(60), nullable=False)
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    est_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    summary_row: Mapped[Summary] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("summary_id", "language", name="uq_translation_summary_language"),
+        CheckConstraint("language = 'tr'", name="ck_summary_translations_language"),
+        CheckConstraint("length(canonical_hash) = 64", name="ck_summary_translations_hash"),
     )
 
 
