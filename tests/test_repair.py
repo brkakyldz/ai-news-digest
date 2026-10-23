@@ -12,11 +12,12 @@ from __future__ import annotations
 import itertools
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from tests.factories import publish
 
 from ainews.config import Settings
-from ainews.db import Article, BulletinItem, Source, Summary
+from ainews.db import Article, BulletinItem, Source, Summary, SummaryTranslation
 from ainews.pipeline import repair as repair_module
 from ainews.pipeline.nodes import summarize as summarize_module
 from ainews.pipeline.repair import resummarize, unattributed_articles
@@ -196,6 +197,69 @@ async def test_every_language_the_article_has_is_rewritten(
     result = await resummarize(session, article.id, settings)
 
     assert result.summaries_rewritten == 2
+
+
+async def test_successful_english_repair_invalidates_its_translation_cache(
+    session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    article = await _summarised(session, body_source="feed", languages=("tr", "en"))
+    summary = (await session.execute(select(Summary).where(Summary.language == "en"))).scalar_one()
+    cached = SummaryTranslation(
+        summary_id=summary.id,
+        language="tr",
+        title_local="Eski ceviri",
+        summary="Eski ozet.",
+        why_it_matters="Eski gerekce.",
+        canonical_hash=summary.content_hash,
+        model="gpt-6-luna",
+    )
+    session.add(cached)
+    await session.commit()
+    monkeypatch.setattr(summarize_module, "summarizer", lambda *_, **__: _FakeLLM())
+
+    result = await resummarize(session, article.id, settings, refetch=False)
+
+    assert result.summaries_rewritten == 2
+    assert (await session.execute(SummaryTranslation.__table__.select())).first() is None
+
+
+async def test_failed_english_repair_preserves_its_translation_cache(
+    session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    article = await _summarised(session, body_source="feed", languages=("en",))
+    summary = (await session.execute(select(Summary).where(Summary.language == "en"))).scalar_one()
+    cached = SummaryTranslation(
+        summary_id=summary.id,
+        language="tr",
+        title_local="Eski ceviri",
+        summary="Eski ozet.",
+        why_it_matters="Eski gerekce.",
+        canonical_hash=summary.content_hash,
+        model="gpt-6-luna",
+    )
+    session.add(cached)
+    await session.commit()
+
+    class Raw:
+        def __init__(self) -> None:
+            self.usage_metadata = {"input_tokens": 70, "output_tokens": 30}
+
+    class FakeStructured:
+        async def ainvoke(self, _prompt: str) -> dict[str, object]:
+            return {"parsed": None, "raw": Raw()}
+
+    class FakeModel:
+        def with_structured_output(self, *_: object, **__: object) -> FakeStructured:
+            return FakeStructured()
+
+    monkeypatch.setattr(summarize_module, "summarizer", lambda *_, **__: FakeModel())
+
+    result = await resummarize(session, article.id, settings, refetch=False)
+
+    assert result.summaries_rewritten == 0
+    preserved = (await session.execute(select(SummaryTranslation))).scalar_one()
+    assert preserved.id == cached.id
+    assert preserved.canonical_hash == summary.content_hash
 
 
 async def test_a_page_that_cannot_be_fetched_falls_back_to_the_stored_body(

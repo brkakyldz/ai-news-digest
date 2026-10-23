@@ -8,6 +8,7 @@ gets its numbers.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -17,11 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ainews.clock import local_day
 from ainews.config import Settings
-from ainews.db import Article, Bulletin, BulletinItem, Run, Source, Summary
+from ainews.db import Article, Bulletin, BulletinItem, Run, Source, Summary, SummaryTranslation
 from ainews.pipeline import graph as graph_module
 from ainews.pipeline.llm import usage_from_message
 from ainews.pipeline.nodes import rank as rank_module
 from ainews.pipeline.nodes import summarize as summarize_module
+from ainews.pipeline.nodes import translate as translate_module
 from ainews.pipeline.pricing import PRICES, estimate_cost, price_for
 from ainews.pipeline.prompts import available_languages, load_prompt
 from ainews.pipeline.state import ArticleSummary, Pick, RankedDigest
@@ -55,6 +57,40 @@ class FakeLLM:
         return FakeStructuredModel(self._parsed, fail_on=self._fail_on)
 
 
+class FakeTranslationStructured:
+    def __init__(self, schema: Any) -> None:
+        self.schema = schema
+
+    async def ainvoke(self, prompt: str, *_: object, **__: object) -> dict[str, Any]:
+        from ainews.pipeline.nodes.translate import (
+            EditorialReason,
+            EditorialTranslation,
+            StoryTranslation,
+        )
+
+        if self.schema is StoryTranslation:
+            parsed = StoryTranslation(
+                title_local="Yeni bir model duyuruldu",
+                summary="Bir sirket yeni model cikardi. Model ucuz. Fiyat degisti.",
+                why_it_matters="Gelistriciler yeni modeli deneyebilir.",
+            )
+        else:
+            editorial_source = json.loads(prompt.splitlines()[-1])
+            ids = [row["summary_id"] for row in editorial_source["reasons"]]
+            parsed = EditorialTranslation(
+                editor_note="Ucuz modeller gunu.",
+                reasons=[
+                    EditorialReason(summary_id=value, reason="Gunun haberi.") for value in ids
+                ],
+            )
+        return {"parsed": parsed, "raw": FakeMessage()}
+
+
+class FakeTranslationLLM:
+    def with_structured_output(self, schema: Any, **__: object) -> FakeTranslationStructured:
+        return FakeTranslationStructured(schema)
+
+
 SUMMARY = ArticleSummary(
     title_local="Yeni bir model duyuruldu",
     summary="Bir sirket yeni bir model yayinladi. Model ucuz. Yeni olan fiyat.",
@@ -81,6 +117,7 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ),
     )
+    monkeypatch.setattr(translate_module, "summarizer", lambda **_: FakeTranslationLLM())
 
 
 # Deliberately unrelated headlines: the dedupe step is real in these tests and
@@ -250,14 +287,15 @@ async def test_a_full_run_fans_out_ranks_and_persists(
 
     stored = list((await session.execute(select(Summary))).scalars())
     assert len(stored) == 3
-    assert {s.language for s in stored} == {"tr"}
+    assert {s.language for s in stored} == {"en"}
     assert {s.article_id for s in stored} == set(ids)
     assert all(s.importance == 4 for s in stored), "the summariser's own score is untouched"
     assert all(s.est_cost_usd > 0 for s in stored), "a summary carries what it cost"
 
     # The bulletin is the published object, and the run is what made it.
     bulletin = (await session.execute(select(Bulletin))).scalar_one()
-    assert (bulletin.day, bulletin.language, bulletin.version) == (local_day(), "tr", 1)
+    assert (bulletin.day, bulletin.language, bulletin.version) == (local_day(), "en", 1)
+    assert bulletin.bilingual is True
     assert bulletin.editor_note == "Ucuz modeller gunu."
     assert bulletin.run_id == run.id
     items = list(
@@ -296,6 +334,7 @@ async def test_one_failing_article_does_not_fail_the_run(
             )
         ),
     )
+    monkeypatch.setattr(translate_module, "summarizer", lambda **_: FakeTranslationLLM())
 
     run = Run(kind="digest", language="en")
     session.add(run)
@@ -387,6 +426,18 @@ async def test_rank_tokens_are_priced_at_the_rank_model(
     )
     session.add(summary)
     await session.commit()
+    session.add(
+        SummaryTranslation(
+            summary_id=summary.id,
+            language="tr",
+            title_local="Baslik",
+            summary="Ozet.",
+            why_it_matters="Onemli.",
+            canonical_hash=summary.content_hash,
+            model="gpt-5.6-luna",
+        )
+    )
+    await session.commit()
 
     state = {
         "run_id": run.id,
@@ -403,6 +454,8 @@ async def test_rank_tokens_are_priced_at_the_rank_model(
         ],
         "rank_usage": {"tokens_in": 5000, "tokens_out": 300},
         "ranked": [{"summary_id": summary.id, "position": 1, "tier": "lead", "reason": ""}],
+        "editor_note": "The model release led the day.",
+        "editor_note_tr": "Model surumu gunun ana konusuydu.",
         "errors": [],
     }
     await persist_run(session, state, split)  # type: ignore[arg-type]

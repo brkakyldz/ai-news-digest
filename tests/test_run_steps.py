@@ -26,11 +26,19 @@ from ainews.pipeline import graph as graph_module
 from ainews.pipeline import steps as steps_module
 from ainews.pipeline.nodes import rank as rank_module
 from ainews.pipeline.nodes import summarize as summarize_module
+from ainews.pipeline.nodes import translate as translate_module
 from ainews.pipeline.state import Pick, RankedDigest
 from ainews.pipeline.steps import step
 from ainews.web.format import format_step_duration
 from ainews.web.i18n import note_text, strings
-from test_graph import SUMMARY, FakeLLM, _no_collect, _no_enrich, _seed_articles
+from test_graph import (
+    SUMMARY,
+    FakeLLM,
+    FakeTranslationLLM,
+    _no_collect,
+    _no_enrich,
+    _seed_articles,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,6 +72,7 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ),
     )
+    monkeypatch.setattr(translate_module, "summarizer", lambda **_: FakeTranslationLLM())
 
 
 async def _rows(session: AsyncSession, run_id: str) -> list[RunStep]:
@@ -117,6 +126,7 @@ async def test_a_full_run_leaves_one_row_per_node_in_order(
         "enrich",
         "summarize",
         "rank",
+        "translate",
         "persist",
     ]
     assert all(r.finished_at is not None for r in rows)
@@ -146,6 +156,7 @@ async def test_the_steps_costs_add_up_to_the_runs_cost(
 
     assert by_node["summarize"].model == "gpt-5.6-luna"
     assert by_node["rank"].model == "gpt-5.6-terra"
+    assert by_node["translate"].model == "gpt-5.6-luna"
     total = sum(r.est_cost_usd for r in by_node.values())
     assert total == pytest.approx(run.est_cost_usd)
     # The four unpaid nodes must not be quietly priced at anything.
@@ -192,6 +203,7 @@ async def test_the_counts_are_the_nodes_own(
     assert by_node["dedupe"].n_in == 3 and by_node["dedupe"].n_out == 3
     assert by_node["summarize"].n_in == 3 and by_node["summarize"].n_out == 3
     assert by_node["rank"].n_in == 3 and by_node["rank"].n_out == 3
+    assert by_node["translate"].n_in == 3 and by_node["translate"].n_out == 3
     # The rank call's tokens are on their own channel, not on a fake summary.
     assert by_node["persist"].n_in == 3
 
@@ -212,6 +224,7 @@ async def test_a_partly_failed_fan_out_says_so(
             )
         ),
     )
+    monkeypatch.setattr(translate_module, "summarizer", lambda **_: FakeTranslationLLM())
     run = await _run_the_graph(session, monkeypatch, language="en")
     by_node = {r.node: r for r in await _rows(session, run.id)}
 
@@ -237,8 +250,7 @@ async def test_a_run_with_no_candidates_has_no_fan_out_row(
     nodes = [r.node for r in await _rows(session, run.id)]
 
     assert "summarize" not in nodes
-    assert "rank" not in nodes
-    assert nodes == ["collect", "dedupe", "enrich", "persist"]
+    assert nodes == ["collect", "dedupe", "enrich", "rank", "translate", "persist"]
 
 
 async def test_a_node_that_raises_still_leaves_its_row(
@@ -283,7 +295,7 @@ async def test_the_fan_out_lookup_never_kills_the_run(
     session: AsyncSession, settings: Settings, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`record_fan_out` reads two rows before it writes one, and it runs inside
-    `persist_node` ahead of `persist_run`. An unguarded read error there would
+    `rank_node` before ranking or translation. An unguarded read error there would
     not lose one row of bookkeeping - it would lose the digest the run paid for,
     because the node that writes it never gets to run."""
 
@@ -315,7 +327,7 @@ async def test_the_run_page_reads_each_node_in_its_own_words(
     run = await _run_the_graph(session, monkeypatch)
     body = client.get(f"/runs/{run.id}?lang=en").text
 
-    assert "Summarize" in body and "Rank" in body
+    assert "Summarize" in body and "Rank" in body and "Translate" in body
     # "In" and "out" are different quantities at every node, so each states its
     # own sentence rather than the table carrying one pair of headings.
     assert "candidates" in body and "kept" in body

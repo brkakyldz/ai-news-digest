@@ -274,14 +274,22 @@ async def rank_once(
     try:
         client = ranker(settings, model).with_structured_output(RankedDigest, include_raw=True)
         response = await client.ainvoke(prompt)
-        parsed = response.get("parsed") if isinstance(response, dict) else None
-        if parsed is None:
-            raise ValueError("ranker returned unparsable output")
     except Exception as exc:
         log.warning("a rank call failed (%s)", exc)
         return None
 
-    usage = usage_from_message(response.get("raw"))
+    usage = usage_from_message(response.get("raw") if isinstance(response, dict) else None)
+    parsed = response.get("parsed") if isinstance(response, dict) else None
+    if parsed is None:
+        log.warning("a rank call returned unusable structured output")
+        return _Pass(
+            order=[],
+            tiers={},
+            reasons={},
+            editor_note="",
+            tokens_in=usage.tokens_in,
+            tokens_out=usage.tokens_out,
+        )
     result = _Pass(
         order=[],
         tiers={},
@@ -304,7 +312,7 @@ async def rank_once(
         result.reasons[summary_id] = pick.reason.strip()
         if len(result.order) == top_n:
             break
-    return result if result.order else None
+    return result
 
 
 # -- the three, aggregated ----------------------------------------------------
@@ -433,8 +441,13 @@ async def rank_day(
             for arrangement in arrangements
         )
     )
-    usable = [result for result in results if result is not None]
+    completed = [result for result in results if result is not None]
+    usable = [result for result in completed if result.order]
     if not usable:
         log.warning("every rank call failed; falling back to importance order")
-        return _fallback(candidates, top_n, language)
-    return _aggregate(usable, top_n, len(candidates))
+        ranking = _fallback(candidates, top_n, language)
+    else:
+        ranking = _aggregate(usable, top_n, len(candidates))
+    ranking.tokens_in = sum(result.tokens_in for result in completed)
+    ranking.tokens_out = sum(result.tokens_out for result in completed)
+    return ranking

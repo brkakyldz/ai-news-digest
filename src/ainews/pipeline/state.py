@@ -178,6 +178,16 @@ class SummaryPayload(TypedDict):
     est_cost_usd: float
 
 
+class SummaryFailurePayload(TypedDict):
+    """Known paid usage from a branch that did not commit a summary."""
+
+    article_id: int
+    model: str
+    tokens_in: int
+    tokens_out: int
+    est_cost_usd: float
+
+
 class ItemPayload(TypedDict):
     """One story's place in the bulletin the run is about to publish."""
 
@@ -224,9 +234,15 @@ class PipelineState(TypedDict, total=False):
     model_rank: str
     candidate_ids: list[int]
     summaries: Annotated[list[SummaryPayload], operator.add]
+    summary_failures: Annotated[list[SummaryFailurePayload], operator.add]
     ranked: list[ItemPayload]
     rank_usage: RankUsage
     editor_note: str
+    translated: dict[int, dict[str, str]]
+    reason_translations: dict[int, str]
+    editor_note_tr: str | None
+    translation_tokens_in: int
+    translation_tokens_out: int
     # The local day the bulletin belongs to, fixed when the run starts so a
     # press at 23:59 writes one day and not two. `YYYY-MM-DD`.
     day: str

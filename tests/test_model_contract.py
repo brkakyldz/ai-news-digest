@@ -239,6 +239,8 @@ async def test_an_empty_answer_arrives_as_parsed_none_with_something_to_log(
 
     assert response["parsed"] is None
     assert response["parsing_error"] is not None
+    usage = usage_from_message(response["raw"])
+    assert (usage.tokens_in, usage.tokens_out) == (TOKENS_IN, TOKENS_OUT)
 
 
 async def test_a_tool_call_answer_is_the_silent_shape(keyed_settings: Settings) -> None:
