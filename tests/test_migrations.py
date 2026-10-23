@@ -73,6 +73,45 @@ async def test_init_db_leaves_the_database_at_head(engine: AsyncEngine) -> None:
     assert await current_revision(engine) == head_revision()
 
 
+async def test_bilingual_schema_migration_preserves_legacy_publications(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(
+                lambda sync_connection: command.upgrade(
+                    alembic_config(sync_connection), "0008_published_checks"
+                )
+            )
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO bulletins (id, day, language, version, editor_note, "
+                    "model_rank, agreement, est_cost_usd, run_id, created_at) "
+                    "VALUES (1, '2026-09-08', 'tr', 1, 'old note', NULL, NULL, 0, NULL, "
+                    "'2026-09-08 10:00:00')"
+                )
+            )
+
+        await init_db(engine)
+
+        async with engine.connect() as connection:
+            legacy = (
+                await connection.execute(
+                    text("SELECT editor_note, editor_note_tr, bilingual FROM bulletins WHERE id=1")
+                )
+            ).one()
+            columns = {
+                row[1]
+                for row in (
+                    await connection.execute(text("PRAGMA table_info(bulletin_items)"))
+                ).all()
+            }
+            assert {"reason", "reason_tr"} <= columns
+        assert tuple(legacy) == ("old note", None, 0)
+    finally:
+        await engine.dispose()
+
+
 async def test_init_db_is_idempotent(engine: AsyncEngine) -> None:
     """It runs on every start, and every entry point calls it."""
     await init_db(engine)
