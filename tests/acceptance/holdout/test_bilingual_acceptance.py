@@ -181,19 +181,21 @@ def prepare_pipeline(demo):
     return root, db_path, article_ids
 
 
+def provider_server_overrides(standin):
+    return {
+        "OPENAI_BASE_URL": standin.base_url,
+        "OPENAI_MAX_RETRIES": "0",
+        "OPENAI_TIMEOUT_SECONDS": "5",
+        "TAVILY_API_KEY": "",
+        "SCHEDULER_ENABLED": "false",
+        "PHOENIX_ENABLED": "false",
+        "DEMO_MODE": "false",
+    }
+
+
 def provider_env(root, db_path, standin):
     env = environment(root, db_path)
-    env.update(
-        {
-            "OPENAI_BASE_URL": standin.base_url,
-            "OPENAI_MAX_RETRIES": "0",
-            "OPENAI_TIMEOUT_SECONDS": "5",
-            "TAVILY_API_KEY": "",
-            "SCHEDULER_ENABLED": "false",
-            "PHOENIX_ENABLED": "false",
-            "DEMO_MODE": "false",
-        }
-    )
+    env.update(provider_server_overrides(standin))
     return env
 
 
@@ -284,7 +286,7 @@ def test_H11_R10_successful_bulletin_has_complete_english_and_turkish_prose(
         assert model and tokens_in > 0 and tokens_out > 0 and cost >= 0
         if reason_en and reason_en.strip():
             assert reason_tr and reason_tr.strip()
-    server = server_factory(root, db_path)
+    server = server_factory(root, db_path, overrides=provider_server_overrides(standin))
     english = archive_page(server, bulletin_id, "en")
     turkish = archive_page(server, bulletin_id, "tr")
     english_markup = StoryMarkup().page(english)
@@ -331,7 +333,7 @@ def test_H12_R10_editorial_translation_failure_keeps_previous_publication_and_re
     assert after == before
     assert translation_count > 0
     assert new_items == 0
-    server = server_factory(root, db_path)
+    server = server_factory(root, db_path, overrides=provider_server_overrides(standin))
     status, detail = server.get(f"/runs/{urllib.parse.quote(str(run_id))}?lang=en")
     assert status == 200
     assert "error" in detail.lower()
@@ -447,7 +449,7 @@ def test_H15_R10_turkish_search_returns_canonical_story_once(demo, standin, serv
             "SELECT title_local FROM summary_translations WHERE summary_id = ? AND language='tr'",
             (summary_id,),
         ).fetchone()[0]
-    server = server_factory(root, db_path)
+    server = server_factory(root, db_path, overrides=provider_server_overrides(standin))
     status, page = server.get("/search?q=" + urllib.parse.quote(term) + "&lang=tr")
     assert status == 200
     ids = StoryMarkup().page(page).story_ids
@@ -461,7 +463,7 @@ def test_H16_R3_R10_topic_counts_and_membership_match_in_both_languages(
     root, db_path, _ = prepare_pipeline(demo)
     result = digest(root, db_path, standin)
     assert result.returncode == 0, f"digest failed: {result.stdout}\n{result.stderr}"
-    server = server_factory(root, db_path)
+    server = server_factory(root, db_path, overrides=provider_server_overrides(standin))
     views = {}
     counts = {}
     for language in ("en", "tr"):
@@ -495,7 +497,7 @@ def test_H17_R10_reads_do_not_call_the_provider(demo, standin, server_factory):
     bulletin_id = published_bulletin(db_path)[0]
     run_id = latest_run(db_path)[0]
     standin_calls = len(standin.state.snapshot())
-    server = server_factory(root, db_path)
+    server = server_factory(root, db_path, overrides=provider_server_overrides(standin))
     for route in (
         "/?lang=en",
         "/?all=1&lang=tr",

@@ -275,9 +275,9 @@ def insert_record(db, table: str, record: dict) -> None:
 
 
 class Server:
-    def __init__(self, root: Path, db: Path, *, timezone="UTC", scheduler=False):
+    def __init__(self, root: Path, db: Path, *, timezone="UTC", scheduler=False, overrides=None):
         self.port = free_port()
-        env = environment(root, db, scheduler=scheduler, timezone=timezone)
+        env = environment(root, db, scheduler=scheduler, timezone=timezone, overrides=overrides)
         env["HOST"] = "127.0.0.1"
         env["PORT"] = str(self.port)
         log_dir = db.parent
