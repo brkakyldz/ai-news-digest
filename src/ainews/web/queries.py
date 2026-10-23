@@ -910,9 +910,9 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
     re-scored an old day with today's checks would be quietly reporting a
     different experiment under the run's own heading.
 
-    Empty for a run that published nothing, and for one published before the
-    column existed - the block is simply not drawn, which is what the run log
-    already does for a run with no steps.
+    Empty for a run that published nothing. A legacy bulletin without stored
+    checks still shows agreement and the retained metrics as unavailable; this
+    page never recomputes checks for historical data.
     """
     bulletin = (
         await session.execute(
@@ -922,17 +922,25 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
             .limit(1)
         )
     ).scalar_one_or_none()
-    if bulletin is None or not bulletin.checks_json:
+    if bulletin is None:
         return []
-    try:
-        stored = json.loads(bulletin.checks_json)
-    except json.JSONDecodeError:
-        return []
+    stored: dict[str, Any] = {}
+    if bulletin.checks_json:
+        try:
+            parsed = json.loads(bulletin.checks_json)
+            if isinstance(parsed, dict):
+                stored = parsed
+        except json.JSONDecodeError:
+            pass
 
-    content = stored.get("content") or {}
-    budget = stored.get("budget") or {}
-    over = (budget.get("over_share") or {}).get("summary")
-    tags = stored.get("tags") or {}
+    def mapping(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    content = mapping(stored.get("content"))
+    budget = mapping(stored.get("budget"))
+    over_share = mapping(budget.get("over_share"))
+    over_count = mapping(budget.get("over_count"))
+    tags = mapping(stored.get("tags"))
     agreement = "n/a" if bulletin.agreement is None else f"{bulletin.agreement:.2f}"
 
     def share_row(label: str, value: float | None, *, invert: bool = False) -> QualityRow:
@@ -947,6 +955,51 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
         shown = 1.0 - value if invert else value
         return QualityRow(label, f"{shown:.0%}", shown)
 
+    def count_row(
+        label: str,
+        count: int | None,
+        total: int | None = None,
+        share: float | None = None,
+    ) -> QualityRow:
+        if count is None:
+            return QualityRow(label, t["quality_na"])
+        value = str(count) if total is None else f"{count}/{total}"
+        if share is not None:
+            value += f" ({share:.0%})"
+        return QualityRow(label, value)
+
+    start, end = day_bounds(bulletin.day)
+    in_bulletin = (
+        select(BulletinItem.id)
+        .where(BulletinItem.summary_id == Summary.id)
+        .where(BulletinItem.bulletin_id == bulletin.id)
+        .exists()
+    )
+    reason_counts = (
+        await session.execute(
+            select(Verdict.reason, func.count())
+            .join(Summary, Summary.id == Verdict.summary_id)
+            .where(Verdict.verdict == "wrong")
+            .where(Summary.language == bulletin.language)
+            .where(in_bulletin | ((Summary.created_at >= start) & (Summary.created_at < end)))
+            .group_by(Verdict.reason)
+        )
+    ).all()
+    verdicts = {"wrong": 0, "wrong_fact": 0, "not_news": 0, "duplicate": 0, "wrong_place": 0}
+    for reason, count in reason_counts:
+        verdicts["wrong"] += int(count)
+        if reason in verdicts:
+            verdicts[reason] += int(count)
+    eval_spend = float(
+        (
+            await session.execute(
+                select(func.coalesce(func.sum(EvalResult.est_cost_usd), 0.0)).where(
+                    EvalResult.bulletin_id == bulletin.id
+                )
+            )
+        ).scalar_one()
+    )
+
     return [
         QualityRow(t["quality_agreement"], agreement),
         share_row(t["quality_key_fact"], content.get("key_fact_share")),
@@ -954,7 +1007,27 @@ async def published_quality(session: AsyncSession, run_id: str, t: Strings) -> l
         share_row(t["quality_numeral_recall"], content.get("numeral_recall")),
         # Drawn as "kept the budget" rather than "went over it", so every bar on
         # the block fills in the same direction and a long bar is always good.
-        share_row(t["quality_budget"], over, invert=True),
+        count_row(
+            t["quality_budget"],
+            over_count.get("summary"),
+            stored.get("n"),
+            over_share.get("summary"),
+        ),
+        count_row(t["quality_why_budget"], over_count.get("why_it_matters")),
+        count_row(t["quality_title_budget"], over_count.get("title_local")),
+        share_row(t["quality_tag_singleton"], tags.get("singleton_share")),
         share_row(t["quality_vocabulary"], tags.get("in_vocabulary_share")),
-        QualityRow(t["quality_ungrounded"], str(len(stored.get("ungrounded") or []))),
+        QualityRow(
+            t["quality_ungrounded"],
+            t["quality_na"]
+            if not isinstance(stored.get("ungrounded"), list)
+            else str(len(stored["ungrounded"])),
+        ),
+        QualityRow(
+            t["quality_wrong_feedback"],
+            f"{verdicts['wrong']} total · wrong_fact {verdicts['wrong_fact']} · "
+            f"not_news {verdicts['not_news']} · duplicate {verdicts['duplicate']} · "
+            f"wrong_place {verdicts['wrong_place']}",
+        ),
+        QualityRow(t["quality_eval_spend"], f"${eval_spend:.4f}"),
     ]
