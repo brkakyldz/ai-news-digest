@@ -8,6 +8,7 @@ import os
 import re
 import urllib.parse
 import uuid
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -119,8 +120,9 @@ def report(root: Path, db: Path, output: Path, *extra: str):
 
 
 def spend_is_108(markdown: str):
-    assert re.search(r"Product spend\s+\$0\.1080", markdown, re.IGNORECASE)
-    assert re.search(r"eval spend\s+\$0\.0000", markdown, re.IGNORECASE)
+    plain = markdown.replace("*", "")
+    assert re.search(r"Product spend\s+\$0\.1080", plain, re.IGNORECASE)
+    assert re.search(r"eval spend\s+\$0\.0000", plain, re.IGNORECASE)
 
 
 def ensure_legacy_eval_row(db, run_id):
@@ -237,7 +239,7 @@ def test_H03_R4_product_spend_is_per_run_and_bulletin_only_limits_detail(demo, t
         set_all_zero(db, "bulletins", ("est_cost_usd",))
         set_all_zero(db, "eval_results", ("est_cost_usd", "cost_usd"))
         base_run_id = db.execute("SELECT id FROM runs LIMIT 1").fetchone()[0]
-        now = "2026-10-23 10:00:00"
+        now = datetime.now(UTC).replace(microsecond=0).isoformat(sep=" ")
         run_a = clone_row(
             db,
             "runs",
@@ -247,7 +249,7 @@ def test_H03_R4_product_spend_is_per_run_and_bulletin_only_limits_detail(demo, t
                 "kind": "digest",
                 "status": "ok",
                 "est_cost_usd": 0.104,
-                "created_at": now,
+                "started_at": now,
             },
         )
         run_b = clone_row(
@@ -259,7 +261,7 @@ def test_H03_R4_product_spend_is_per_run_and_bulletin_only_limits_detail(demo, t
                 "kind": "digest",
                 "status": "ok",
                 "est_cost_usd": 0.004,
-                "created_at": now,
+                "started_at": now,
             },
         )
         base_bulletin_id, _, _ = latest_bulletin(db)
@@ -312,7 +314,7 @@ def test_H04_R5_each_persisted_running_kind_refuses_prune_and_dry_run(demo):
                 {
                     "kind": kind,
                     "status": "running",
-                    "created_at": "2026-10-23 10:00:00",
+                    "started_at": datetime.now(UTC).replace(microsecond=0).isoformat(sep=" "),
                 },
             )
             db.commit()
@@ -401,7 +403,7 @@ def test_H06_R7_removed_rank_stability_keeps_legacy_rows_and_n_a_agreement_visib
                 "kind": "digest",
                 "status": "ok",
                 "est_cost_usd": 0.0,
-                "created_at": "2026-10-23 10:00:00",
+                "started_at": datetime.now(UTC).replace(microsecond=0).isoformat(sep=" "),
             },
         )
         ensure_legacy_eval_row(db, run_id)
