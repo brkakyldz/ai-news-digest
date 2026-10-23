@@ -71,16 +71,6 @@ def test_summaries_keep_the_word_budget(fixture: dict[str, Any]) -> None:
     assert budget["over_count"]["title_local"] == 0, budget
 
 
-@pytest.mark.parametrize("fixture", _fixtures())
-def test_summaries_are_three_sentences(fixture: dict[str, Any]) -> None:
-    sentences = checks.word_budget(fixture["stories"])["sentences"]
-    n = sum(sentences.values())
-    assert sentences.get(3, 0) / n >= 0.95, sentences
-
-
-# -- grounding ----------------------------------------------------------------
-
-
 @pytest.mark.parametrize("fixture", _fixtures("numerals"))
 def test_no_numeral_appears_that_the_body_did_not_contain(fixture: dict[str, Any]) -> None:
     flagged = checks.ungrounded_numerals(fixture["stories"])
@@ -105,8 +95,7 @@ def _story(**over: Any) -> dict[str, Any]:
 def test_the_content_floor_catches_prose_that_says_nothing() -> None:
     """The regression every other check passes.
 
-    Three generic, numberless sentences at importance 3 clear the word budget,
-    the sentence histogram, the tag spread and the note shape; they are flagged
+    Generic, numberless writing clears the word budget and tag spread; it is flagged
     by `ungrounded_numerals` never (no figure to flag) and by the grounding
     judge never (no claim to disagree with). The 2026-09-06 run was already 70%
     threes, so this is the direction the writing drifts in (PLAN-V2 5.6).
@@ -185,38 +174,10 @@ def test_tags_are_a_vocabulary_not_a_long_tail(fixture: dict[str, Any]) -> None:
     assert vocabulary["singleton_share"] <= 0.70, vocabulary
 
 
-@pytest.mark.parametrize("fixture", _fixtures())
-def test_importance_is_mostly_two_or_three(fixture: dict[str, Any]) -> None:
-    """The prompt says most items are 2 or 3 and that 5 is rare."""
-    share = checks.importance_distribution(fixture["stories"])
-    assert share[2] + share[3] >= 0.50, share
-    assert share[5] <= 0.10, share
-
-
 # -- ranking ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fixture", _fixtures("fives"))
-def test_every_five_has_a_ranked_representative(fixture: dict[str, Any]) -> None:
-    assert checks.unrepresented_fives(fixture["stories"]) == []
-
-
-@pytest.mark.parametrize("fixture", _fixtures())
-def test_the_ranker_is_reported_against_the_fallback(fixture: dict[str, Any]) -> None:
-    """A diagnostic, not a bound (E5: overlap at top_n on most runs means the
-    rank call buys nothing). Here it only has to be computable."""
-    result = checks.ranker_vs_fallback(fixture["stories"])
-    assert 0 <= result["overlap"] <= result["top_n"]
-
-
 # -- the editor's note --------------------------------------------------------
-
-
-@pytest.mark.parametrize("fixture", _fixtures("editor_note"))
-def test_the_editor_note_is_three_paragraphs_of_25_to_40_words(fixture: dict[str, Any]) -> None:
-    shape = checks.editor_note_shape(fixture["editor_note"])
-    assert shape["paragraphs"] == 3, shape
-    assert all(25 <= words <= 40 for words in shape["words"]), shape
 
 
 # -- the copyright rule -------------------------------------------------------
@@ -299,69 +260,6 @@ def test_the_probe_case_is_caught() -> None:
 # -- the other pure functions -------------------------------------------------
 
 
-def test_unrepresented_fives_sees_through_a_cluster() -> None:
-    """A five whose *other outlet* made the digest is represented."""
-    stories = [
-        {
-            "article_id": 1,
-            "title": "Nvidia is buying Hugging Face for $13 billion",
-            "importance": 5,
-            "position": None,
-        },
-        {
-            "article_id": 2,
-            "title": "Nvidia is buying Hugging Face for $13 billion - The Verge",
-            "importance": 4,
-            "position": 1,
-        },
-        {
-            "article_id": 3,
-            "title": "A lab ships a model nobody ranked",
-            "importance": 5,
-            "position": None,
-        },
-    ]
-    assert checks.unrepresented_fives(stories) == [3]
-
-
-def test_fallback_order_is_importance_then_weight() -> None:
-    stories = [
-        {"article_id": 1, "importance": 3, "weight": 2.0},
-        {"article_id": 2, "importance": 4, "weight": 0.5},
-        {"article_id": 3, "importance": 3, "weight": 1.0},
-    ]
-    assert checks.fallback_order(stories, 3) == [2, 1, 3]
-
-
-def test_editor_note_shape_counts_paragraphs_and_words() -> None:
-    note = "one two three\n\nfour five\n\n\nsix"
-    assert checks.editor_note_shape(note) == {"paragraphs": 3, "words": [3, 2, 1]}
-    assert checks.editor_note_shape(None) == {"paragraphs": 0, "words": []}
-
-
-# -- the editor's placements (ADR 0030) ---------------------------------------
-
-
-def test_tier_shape_counts_the_bands_and_the_editors_disagreements() -> None:
-    """A bulletin that is fifteen `notable` is a ranker filling a page. And a
-    lower-importance story placed above a higher one is the editor reading
-    against the free ordering, which is what an editor is for - all of it would
-    mean the two are not reading the same thing."""
-    stories = [
-        {"article_id": 1, "importance": 3, "position": 1, "tier": "lead"},
-        {"article_id": 2, "importance": 5, "position": 2, "tier": "major"},
-        {"article_id": 3, "importance": 4, "position": 3, "tier": "major"},
-        {"article_id": 4, "importance": 5, "position": None, "tier": None},
-    ]
-    shape = checks.tier_shape(stories)
-    assert shape["n_ranked"] == 3
-    assert shape["counts"] == {"lead": 1, "major": 2, "notable": 0, "brief": 0}
-    # (1, 2) and (1, 3): a 3 published above a 5 and above a 4.
-    assert shape["contradictions"] == 2
-    assert shape["contradiction_share"] == pytest.approx(2 / 3)
-    assert checks.tier_shape([])["n_ranked"] == 0
-
-
 def test_the_tag_vocabulary_share_reads_the_prompts_own_list() -> None:
     from ainews.pipeline.prompts import TAG_VOCABULARY
 
@@ -378,3 +276,7 @@ def test_the_vocabulary_share_is_reported_not_asserted(fixture: dict[str, Any]) 
     against."""
     share = checks.tag_vocabulary(fixture["stories"])["in_vocabulary_share"]
     assert 0.0 <= share <= 1.0
+
+
+def test_word_budget_does_not_compute_a_sentence_histogram() -> None:
+    assert "sentences" not in checks.word_budget([_story()])

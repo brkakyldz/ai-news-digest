@@ -132,6 +132,10 @@ async def test_the_labels_page_offers_the_rest(
 
     ids = list((await session.execute(select(Summary.id))).scalars())
     for summary_id in ids[:5]:
+        session.add(Verdict(summary_id=summary_id, verdict="wrong", reason="wrong_fact"))
+    # Archived positive feedback remains in storage but is absent from the active
+    # wrong-findings page and its pagination count.
+    for summary_id in ids[5:8]:
         session.add(Verdict(summary_id=summary_id, verdict="ok"))
     await session.commit()
 

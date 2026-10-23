@@ -7,6 +7,6 @@ being measured.
 
 `checks.py` is pure - rows in, numbers out - so the recorded fixture under
 `tests/fixtures/runs/` and the live database feed the same code. Everything that
-spends money (`judge`, `rank-stability`) is a sibling command, `ainews eval …`,
+spends money (`judge`) is a sibling command, `ainews eval …`,
 and never a test; `pytest` stays offline (PLAN-EVALS, ADR 0019).
 """
