@@ -39,6 +39,10 @@ from ainews.web.format import to_local
 def _isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """No real keys, no real database, no scheduler - in every test."""
     db_file = tmp_path / "test.db"
+    # The developer's `.env` is not read at all: a model or language pinned
+    # there would otherwise replace the defaults the assertions are written
+    # against, and the suite would pass or fail by whose machine it ran on.
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     monkeypatch.setenv("TAVILY_API_KEY", "")
