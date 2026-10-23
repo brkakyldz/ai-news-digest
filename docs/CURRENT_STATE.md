@@ -2,8 +2,8 @@
 project_id: search-agent
 implementation_agent: codex
 branch: codex/issues-integration
-as_of: 78e214c
-active_milestone: issues-wave2
+as_of: 5f126e9
+active_milestone: delivery
 active_run: docs/runs/2026-10-23_issues.md
 ---
 # Current state
@@ -12,16 +12,15 @@ active_run: docs/runs/2026-10-23_issues.md
 
 | ID | Status | Evidence | Commit |
 |---|---|---|---|
-| issues-wave1 | OPEN_GATE | Combined offline suite passed; review follow-ups cover failed-run accounting and complete legacy quality display | 0b22edb |
-| issues-wave2 | IN_PROGRESS | Frozen schema/read contract and independent H01-H19 pack; isolated pipeline/read builders | 0230bcc |
-| delivery | PLANNED | Independent acceptance, integration review, CI, PR merge and issue closure | — |
+| issues-wave1 | PASS | Runtime/model/eval fixes integrated; review follow-ups and independent scenarios passed | 5f126e9 |
+| issues-wave2 | PASS | Bilingual provider/read lanes, full offline suite and first H01-H19 gate passed | 5f126e9 |
+| delivery | OPEN_GATE | Two repeat acceptance runs and final-head CI precede ready/merge/issue closure in PR #12 | — |
 
 ## Open gates
 
-- The quality follow-up must retain missing agreement and every keep-list signal on legacy run detail.
-- Failed paid work must reach the run cost total before the report can close #4.
-- Complete bilingual publication, read projection and matching relevant topic predicates.
-- Full combined tests, H01-H19 without skips, independent review and GitHub CI must pass before delivery.
+- Complete the two remaining H01-H19 repetitions with zero skips.
+- Pass final-head Linux/Windows quality checks and closeout verification.
+- Mark PR #12 ready, merge the verified head and verify all nine issue closures.
 
 ## Blockers
 
@@ -29,4 +28,4 @@ None. The owner waived the other-runtime requirement for the independent author.
 
 ## Next
 
-Integrate the schema and pipeline before the read lane, then execute all independent scenarios and deliver the verified PR.
+Finish the repeated acceptance gate, then deliver [PR #12](https://github.com/brkakyldz/ai-research-agent/pull/12) and remove this task's clean merged worktrees.
