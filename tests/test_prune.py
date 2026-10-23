@@ -147,6 +147,35 @@ async def test_pruning_refuses_while_a_run_is_in_flight(
         runner.release_slot("digest:held")
 
 
+@pytest.mark.parametrize("kind", ["collect", "digest"])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_pruning_refuses_for_a_persisted_running_row(
+    kind: str,
+    dry_run: bool,
+    settings: Settings,
+    engine: AsyncEngine,
+    session: AsyncSession,
+) -> None:
+    """A CLI process cannot see the web process's in-memory run slot."""
+    source = Source(name="OpenAI", url="https://openai.com/rss.xml")
+    session.add(source)
+    await session.flush()
+    old = Article(
+        source_id=source.id,
+        url=f"https://openai.com/old-{kind}-{dry_run}",
+        url_canonical=f"https://openai.com/old-{kind}-{dry_run}",
+        title="Old",
+        fetched_at=utcnow() - timedelta(days=settings.collect_max_age_days + 1),
+    )
+    session.add_all([old, Run(kind=kind, language="tr", status="running")])
+    await session.commit()
+
+    with pytest.raises(runner.RunBusy):
+        await prune(settings, dry_run=dry_run)
+
+    assert (await session.execute(select(Article.id))).scalars().all() == [old.id]
+
+
 async def test_the_command_reports_and_deletes_nothing_on_a_dry_run(
     settings: Settings, engine: AsyncEngine, session: AsyncSession, capsys: pytest.CaptureFixture
 ) -> None:
