@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 PYTHON = Path(r"C:/search_agent/.venv/Scripts/python.exe")
-LAUNCHER = "from ainews.cli import main; main()"
+LAUNCHER = "from ainews.cli import main; raise SystemExit(main())"
 
 
 def project_root(pytestconfig) -> Path:
