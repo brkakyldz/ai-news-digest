@@ -21,15 +21,11 @@ import pytest
 from ainews.evals.record import FIXTURE_DIR
 from ainews.quality import checks
 
-# fixture name -> {gap: reason}. The 2026-09-04 run predates E0.5 (the
-# "use a figure only if it appears in the text" line), the three-paragraph
-# editor's note (2026-09-05), and its ranked Astra lead was deleted by the
-# same-day source purge (a product defect, not evaluation work).
+# fixture name -> {gap: reason}. Both runs predate `key_fact`; the 2026-09-04
+# fixture also predates the numeral-grounding check.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
     "2026-09-04_tr.json": {
         "numerals": "predates E0.5: '500 binden fazla saat' is the figure the probe found",
-        "editor_note": "predates the three-paragraph editor's-note prompt of 2026-09-05",
-        "fives": "the ranked Astra lead (HN) was purged after the run; article 58 is unrepresented",
         "key_fact": "predates the field; nobody asked these articles the question",
     },
     "2026-09-06_tr.json": {
@@ -172,12 +168,6 @@ def test_tags_are_a_vocabulary_not_a_long_tail(fixture: dict[str, Any]) -> None:
     page stops being a filter and becomes a list of every story's own words."""
     vocabulary = checks.tag_vocabulary(fixture["stories"])
     assert vocabulary["singleton_share"] <= 0.70, vocabulary
-
-
-# -- ranking ------------------------------------------------------------------
-
-
-# -- the editor's note --------------------------------------------------------
 
 
 # -- the copyright rule -------------------------------------------------------
