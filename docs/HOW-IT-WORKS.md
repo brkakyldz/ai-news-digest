@@ -26,7 +26,8 @@ at line 0007 of the table in §17.
 One process. It polls sixteen RSS feeds, throws away the same story told five
 times, summarises what is left with an LLM, ranks the whole day three times over
 and publishes what the three readings agree on, and serves the result as one
-page. It runs on one machine, in one container, for about a dollar a month.
+page with complete English and Turkish views. It runs on one machine, in one
+container; the recorded per-run bill is visible alongside the work.
 
 There is exactly one thing on a clock: the feed poll, every three hours, which
 costs nothing. The digest — the part that spends money — is started by a person
@@ -40,14 +41,14 @@ doing.
                  │  APScheduler: collect */3h — nothing else on a clock │
                  │  POST /runs/start  ← the button a person presses     │
                  └───────────────────────┬─────────────────────────────-┘
-                                         │  run_digest(language, mode, models)
+                                         │  run_digest(models) → English + Turkish
                                          ▼
-  16 RSS feeds ─► collect ─► dedupe ─► enrich ─► [Send ×N] summarize ─► rank ×3 ─► persist
+  RSS feeds ─► collect ─► dedupe ─► enrich ─► summarize ─► rank ×3 ─► translate ─► persist
                                          │                    │                     │
                                          │              a summary per          a bulletin
                                          │               article, now            per day
                                          ▼
-    SQLite (WAL + FTS5): sources · articles · summaries · bulletins · bulletin_items
+    SQLite: sources · articles · summaries · summary_translations · bulletins · bulletin_items
                          runs · run_steps · verdicts · eval_results
                                          │
                                          ▼
@@ -99,11 +100,10 @@ is summarised, because at $0.0011 a story a title-only filter deciding in
 advance what deserves reading would save a cent and hide the story the day was
 actually about (ADR 0001).
 
-### 2.3 Degrade, never fail
+### 2.3 Contain failures at the right boundary
 
-A digest is a hundred small jobs and some of them will fail. The rule everywhere
-is that a failure is contained at the smallest unit that can hold it and the run
-still ships:
+A digest is many small jobs. Most failures are contained at a single source or
+article, while required translation completeness is a publication boundary:
 
 | The unit | What its failure costs |
 |---|---|
@@ -113,6 +113,7 @@ still ships:
 | Tavily | An empty string and a thinner summary |
 | The WAL pragma | A warning, and the rollback journal |
 | Bookkeeping (`run_steps`, tracing) | Swallowed and logged — a paid run is never killed by its own instrumentation |
+| Required Turkish prose | Hard error before publication; previous bulletin stays readable and completed translations remain reusable |
 
 `partial` is a real run status and not a soft failure: three articles would not
 summarise and the other ninety-seven are still a bulletin. It means that and
@@ -134,24 +135,18 @@ wrong merge stays inspectable instead of becoming an article nobody can explain
 the absence of — and why a run that crashed is closed as `error` rather than left
 saying `running` forever.
 
-### 2.5 Nothing the model says is taken on trust
+### 2.5 Inspect concrete errors
 
-Output quality is a number a command regenerates, never a claim in a document.
-Five layers, cheapest first: deterministic checks over stored rows, the reader's
-own *doğru · yanlış* on every story with a word for *what* was wrong, a sampled
-grounding judge one model tier above the pipeline, a rank-stability probe, and a
-prompt comparison over frozen bodies. The reader's labels are the ground truth;
-the judge is what gets calibrated against them, not the other way round (ADR
-0019).
+Free content, numeral, budget and tag checks run on each publication. Production
+ranking stores its own agreement. A reader can report a wrong fact, irrelevant
+story, duplicate or wrong placement, with an optional note. A sampled grounding
+judge and frozen-corpus prompt comparisons remain explicit paid CLI operations.
+Wrong-only feedback cannot establish judge precision or specificity, and the
+report makes no calibrated-quality claim.
 
-Three consequences worth stating. The free half — the checks, which read rows and
-call nothing — is **product code** in `ainews/quality/`: it runs on every press
-and lands on `/runs/<id>`, because numbers the operator never sees measure
-nothing (ADR 0033). The paid half stays a layer the pipeline and the web layer
-never import: deleting `src/ainews/evals/` would break one CLI subcommand and
-nothing else (ADR 0023). And where a number cannot be produced honestly it is not
-produced — five reader labels against thirty per class means the judge is
-uncalibrated, and the report says so instead of dividing five by five.
+The free half is product code in `ainews/quality/`; the pipeline and web never
+import paid `ainews/evals/` code. The operational interpretation of each retained
+signal lives in [EVALUATING.md](EVALUATING.md).
 
 ### 2.6 Show, do not spend
 
@@ -205,7 +200,7 @@ Four conventions, worth knowing before opening a file.
 | Web | `src/ainews/web/` | Routes, read queries, the shell's context, templates. Never writes a summary. `format.py` is pure formatting; `views.py` is what touches a session or a request; `queries.py` is SQL. |
 | CLI | `src/ainews/cli.py` | Calls the same functions the button and the poll call. No second implementation. |
 | Quality | `src/ainews/quality/` | The deterministic checks and the query that shapes a day's stories for them. Calls no model, spends nothing, writes no row — so the pipeline may import it, and does. |
-| Evaluation | `src/ainews/evals/` | Reads the database, `quality/` and the pipeline's node functions; imported by neither the pipeline nor the web layer. Spends money only behind `ainews eval judge` / `rank-stability` / `compare`, never in `pytest`. |
+| Evaluation | `src/ainews/evals/` | Reads the database, `quality/` and the pipeline's node functions; imported by neither the pipeline nor the web layer. Spends money only behind `ainews eval judge` / `compare`, never in `pytest`. |
 | Demo | `src/ainews/demo/` | One recorded day as JSON, and the export and seed either side of it. Imported by the CLI and by the web layer's startup, and only when `DEMO_MODE` is on. |
 
 The dependency direction is one-way: web and CLI both call into pipeline,
@@ -305,7 +300,12 @@ summariser's answer to "is this AI news at all", `kind` is what sort of item it
 is, and `key_fact` is the one figure, name, version or date that makes the story
 news — the field the content check reads (§15).
 
-**`bulletins`** (`models.py`) — one day's reading in one language, under
+**`summary_translations`** — reusable Turkish headline, summary and consequence,
+keyed on canonical summary ID and language. A hash of the English source prose
+validates the cache; model, token counts and cost travel with each translation.
+Manual canonical repair invalidates that cache in the same transaction.
+
+**`bulletins`** (`models.py`) — one day's selection with stored language views, under
 `UNIQUE(day, language, version)`. `day` is a **local** calendar day, computed in
 Python by `ainews/clock.py` and stored as `YYYY-MM-DD`: `date()` in SQLite would
 apply the rule in UTC and file a 02:00 Antalya story under the previous day. A
@@ -323,8 +323,9 @@ event. A bulletin reads in `position` order and only `position`. Sorting by tier
 would regroup the editor's argument, and a notable sitting between two majors is
 a legitimate claim about a day.
 
-**`verdicts`** (`models.py`) — the reader's own call on one summary, `ok` or
-`wrong`, and when it is `wrong`, which of four claims failed: `wrong_fact |
+**`verdicts`** (`models.py`) — categorized wrong feedback on one summary. New
+writes accept only `wrong`; old `ok` rows remain read-only history. The reason is
+one of four claims: `wrong_fact |
 not_news | duplicate | wrong_place`, plus an optional note. Four words rather
 than one because a story block asserts four separate things, and only
 `wrong_fact` is evidence about the grounding judge (§15). One row per summary; a
@@ -332,7 +333,7 @@ later verdict overwrites the earlier one rather than accumulating a history
 nobody reads.
 
 **`eval_results`** (`models.py`) — one measurement that cost money: a judged
-summary or a rank probe, keyed on the **bulletin** it measured, because a
+summary or a preserved historical rank-probe row, keyed on the **bulletin** it measured, because a
 measurement is about what was published rather than about the press that paid for
 it. It carries its own tokens and cost, so `ainews eval report` totals evaluation
 spend beside product spend, and `prompt_version`, a twelve-character hash of the
@@ -438,7 +439,7 @@ alone serves a dozen query variants of one feed.
 `build_graph()` (`pipeline/graph.py`):
 
 ```
-START → collect → dedupe → enrich → [Send × N] summarize → rank → persist → END
+START → collect → dedupe → enrich → [Send × N] summarize → rank → translate → persist → END
 ```
 
 Only one edge is interesting, and it is `enrich → summarize`.
@@ -636,12 +637,24 @@ The ranking call's tokens come back on their own state key, `rank_usage`, rather
 than riding a fake summary payload: a carrier defined in two modules, filtered in
 three and explained in each costs more than a channel does.
 
-### 7.7 persist
+### 7.7 translate and persist
+
+The translation stage resolves complete Turkish prose for every selected story,
+the editor note and placement reasons. A matching cached story translation is
+free; missing or stale translations use the selected summary model. The step
+records paid usage even if a later translation fails. Required missing prose
+raises before publication, preserves the previous bulletin and leaves an error
+run with recorded spend. A retry ranks the existing English pool even when it
+has no new articles to summarize, then reuses completed translations.
+
+`persist` validates completeness again and atomically publishes one English
+canonical bulletin with `bilingual=true`, translated note and item reasons.
+There is one membership/order/tier list for both views; translations never rank.
 
 `persist_run` (`pipeline/nodes/persist.py`) is where a run becomes something the
 dashboard can read a week later. It does not write the summaries: each was
 committed by its own branch as it came back (§7.5), so its job is the *other*
-object: one `Bulletin` for the day, in one language, with one `BulletinItem` per
+object: one bilingual `Bulletin` for the day, with one `BulletinItem` per
 pick, and then the run row closed with counts, tokens, cost, up to 20 error lines,
 and `ok` or `partial`.
 
@@ -699,9 +712,9 @@ ADR 0020 made the model an argument to the work rather than a line in a file tha
 needs a restart. Three layers, in this order:
 
 1. **The press.** `GET /runs/confirm` swaps the button for a question carrying a
-   model for the summariser (`?ms=`), a model for the ranker (`?mr=`) and the
-   bulletin's output language (`?out=`), with the price per million tokens for the
-   pair drawn under them. Only the *answer* is the `POST`.
+   model for the summariser (`?ms=`) and a model for the ranker (`?mr=`), with
+   the price per million tokens for the pair drawn under them. Every new press
+   produces English and Turkish; the summary model also translates. Only the *answer* is the `POST`.
 2. **The CLI.** `--model-summarize` / `--model-rank`, with `argparse` choices
    built from `PRICES`.
 3. **The environment.** `OPENAI_MODEL*` — the fallback when neither of the above
@@ -808,8 +821,8 @@ real and nothing on it says which half.
 | `POST /runs/start` | The only thing that starts a digest in the running app. |
 | `GET /runs/status` | HTMX poll while a run is in flight. |
 | `GET /runs/{id}` | One run, node by node, with the free quality checks on the bulletin it published under it. |
-| `GET /runs/verdicts` | The sentences the judge could not support, each with the two words under it, then every verdict the reader has given with the reason on the `wrong` ones. Declared before `/runs/{id}`, which would otherwise swallow it. |
-| `POST /verdict` | The reader's *doğru · yanlış* on one summary, and on a `wrong` which of the four claims failed. Saved in place; a `reason` outside the four is a 422. `frag=words` answers with the two words alone, for the findings table. |
+| `GET /runs/verdicts` | Suspect grounding claims and categorized wrong feedback. Declared before `/runs/{id}`, which would otherwise swallow it. |
+| `POST /verdict` | Categorized wrong feedback and an optional note on a canonical summary ID. Saved in place; `ok` or an invalid reason receives 422. Bare repeat submissions preserve existing annotations. |
 | `POST /sources/toggle`, `POST /sources/add` | Form posts, 303 back to `/sources`. |
 | `GET /health` | Database reachable, keys present (never their values). |
 
@@ -877,16 +890,10 @@ the two can never disagree.
 want the same few shapes and a query written twice is a query that disagrees with
 itself later.
 
-- `latest_bulletin` (`queries.py`) is one query: the newest version of the
-  newest day. It is **not** language-scoped, and neither are `bulletins_page` or
-  `search_stories` — scoping them made the bar's TR/EN switch a content filter,
-  and a reader with one Turkish bulletin in the database who pressed `English` was
-  told there was no digest yet. The switch translates the interface and nothing
-  else (ADR 0017); the page draws the newest bulletin whatever language it holds,
-  and the bar names that language when it is not the page's. There is no
-  supplement rule to apply and no fuller-bulletin horizon to reach back over,
-  because a press publishes a new *version* of the day rather than a delta beside
-  it (ADR 0030).
+- `latest_bulletin` selects the newest version of the newest day, independent
+  of reading language. One bilingual bulletin supplies both views. Legacy history
+  is still listed and readable; missing translations cause an honest language
+  fallback, never missing selected stories.
 - `stories_for_bulletin` (`queries.py`) reads a bulletin in `position` order and
   draws each story at its `tier`. `_rest_of_day` is the other list — the day's
   relevant summaries with no item in that bulletin — and it draws the
@@ -902,8 +909,8 @@ itself later.
 - `judge_findings` is every summary whose latest grounding judgement failed, with
   the sentence the judge could not support and the reader's verdict if there is
   one — read off `eval_results` and `verdicts`, which the web layer owns, never
-  through `evals/` (ADR 0019 §2). `/runs/verdicts` draws it with the two words
-  under each row.
+  through `evals/` (ADR 0019 §2). `/runs/verdicts` draws it
+  as a categorized wrong action on each row.
 - `search_stories` (`queries.py`) goes through FTS5. `_fts_query` quotes every
   token and appends `*`, which does two jobs: it stops FTS5 treating `AND`, `-` or
   `"` as operators and erroring on an ordinary search, and it makes Turkish
@@ -917,12 +924,9 @@ itself later.
 - `verdict_progress` (`queries.py`) is how many summaries carry a verdict out
   of how many exist. It is on `/runs` because it is the one evaluation number the
   interface can actually move.
-- `labelled_stories` (`queries.py`) is every verdict, newest first, with enough
-  of the story to place it and the newest bulletin that summary appears in as the
-  address the row links to. Both words and not only `wrong`, because the
-  calibration needs both classes — and the `reason` beside the word, because
-  three of the four reasons are not about the summariser at all and a table that
-  does not say which is which makes three different findings look like one.
+- `labelled_stories` reads categorized wrong feedback, newest first, and links
+  the canonical story ID to its newest bulletin. Historical positive rows remain
+  stored but do not create active controls or calibration evidence.
 - `published_quality` (`queries.py`) reads `bulletins.checks_json` for
   `/runs/<id>`: the checks as the press computed them, not recomputed now. A page
   that re-scores an old day with today's checks reports one experiment under
@@ -944,6 +948,13 @@ a promise about the link behind it:
   `agents 27` returns four when it is pressed.
 
 ### 11.6 Language and theme
+
+The reading language selects both UI strings and stored prose. New bulletins
+have complete EN/TR narrative views with identical IDs, order and tiers. Legacy
+single-language bulletins and untranslated unselected extras remain readable with
+the actual content language labelled. Turkish search includes valid translated
+prose as well as canonical FTS hits, deduplicated by summary ID. Reads call no
+model. Tags, source names and URLs stay stable identifiers.
 
 `web/i18n.py` is two dictionaries of about 130 strings each. Two dictionaries beat
 a translation framework at this size, and a missing key is a `KeyError` in a
@@ -1020,194 +1031,69 @@ The reasoning behind the page is choices 0008–0024 in §17; the short version:
 | The rank call fails | Fallback ordering by importance then source weight; the note says so. |
 | The model returns nonsense positions | Out-of-range and repeated ordinals are dropped; empty result falls back. |
 | A step row cannot be written | Swallowed and logged; the paid run finishes. |
+| A required translation fails | No new bulletin is published; the old one stays current, completed story translations are reusable, and paid work remains in the error run. |
 | A run crashes | `_fail_run` closes the row as `error`, the failed step carries the exception, and the failed run does not reset the countdown. |
+| TIMEZONE is mistyped | Both scheduler and display use the shared UTC fallback. |
+| Prune meets a running collect or digest | Persisted running rows refuse deletion, including from a separate process; SQLite serializes the check and delete. |
 | WAL cannot be enabled | Warning naming the cause, and the app runs on the rollback journal. |
 | No `OPENAI_API_KEY` | The button is dead and says why; collection still runs. |
 | A second press mid-run | Refused, not queued — and a second run later costs nothing for stories already summarised. |
 
 ## 13. Cost
 
-`gpt-5.6-luna` at $0.20 / $1.20 per million tokens (ADR 0001), one summarize call
-per new story with the body capped at 5000 characters, plus three rank calls over
-the standing pool. Measured at roughly **$1 a month** against a $10 budget.
-Tavily's free tier is 1,000 credits a month and the daily cap defaults to 30.
+`pipeline/pricing.py` is the checked-in model menu and token-price source.
+GPT-6 Luna is the summarization/ranking default; explicit model overrides and the
+independent grounding judge remain. GPT-6 Luna calls omit unsupported temperature
+parameters. One press buys new summaries, three rankings, missing selected-story
+translations and translated editorial prose. Cache hits and language reads are
+free. The estimate guard includes translation and existing-pool retries.
 
-Four real runs. Only the last was made under ADR 0030, where ranking stopped being
-a function of the delta and became a function of the window:
-
-| | Summarised | Ranked | Tokens (in / out) | Cost | Time |
-|---|---|---|---|---|---|
-| First run (a week's backlog) | 136 | 136 | 191,960 / 64,126 | $0.115 | 85s |
-| A three-hour delta | 21 | 21 | 30,600 / 8,200 | $0.017 | 43s |
-| A two-day delta | 20 | 20 | 32,195 / 12,363 | $0.021 | 58s |
-| A press over a standing pool | 32 | 129 | 137,057 / 22,563 | $0.055 | 63s |
-
-$0.0011 a story to summarise and $0.020 a press to rank 129 candidates, so at the
-eighteen stories a day the feeds actually deliver an ordinary press is $0.034 and
-a month of daily presses is about a dollar.
-
-Every run row carries its own token counts and estimated cost, `/runs` totals them
-for today, the last 7 days and the last 30, and `/runs/<id>` breaks one run down by
-node.
-
----
+Run rows carry each press's paid usage. The report sums those rows once within
+its time window; selecting one bulletin changes detail, not window spend. This
+avoids charging shared summaries again for every version. See the historical
+single-language measurements in the README and the current report semantics in
+[EVALUATING.md](EVALUATING.md).
 
 # Part III — Whether it is any good
 
 ## 14. Tests
 
-`pytest` with `asyncio_mode = "auto"`, against an in-memory or temporary SQLite
-database: **598 tests**, offline, in about a minute and a half — a fake model and
-`respx` for HTTP, so a full fan-out, three rank calls and a publish are exercised
-with no network and no spend.
+Unit tests use temporary SQLite databases and dependency transports, not real
+provider calls. The suite exercises collection, dedupe, structured output,
+ranking, publication, failure accounting, read projection and feedback. Known
+strict xfails are explicitly counted in `tests/test_known_gaps.py`; their reason
+states what would close the gap.
 
-They cover failure modes rather than the happy path, and the names read as claims:
-
-- `test_a_source_disables_itself_after_repeated_failures`
-- `test_archive_entries_older_than_the_horizon_are_skipped`
-- `test_the_same_story_from_three_outlets_survives_once`
-- `test_duplicates_are_marked_not_deleted`
-- `test_already_summarised_articles_are_never_candidates_again`
-- `test_a_failing_search_still_costs_its_credit`
-- `test_the_counter_is_stored_not_held_in_memory`
-- `test_one_failing_article_does_not_fail_the_run`
-- `test_ranking_falls_back_to_importance_when_the_model_fails`
-- `test_out_of_range_positions_from_the_model_are_dropped`
-- `test_a_sleeping_laptop_produces_one_catch_up_not_four`
-- `test_a_filesystem_without_shared_memory_degrades_instead_of_crashing`
-- `test_two_simultaneous_presses_start_one_run`
-- `test_a_failed_run_does_not_reset_the_countdown`
-- `test_search_matches_a_turkish_suffix`
-- `test_the_page_loads_no_third_party_assets`
-
-Sixteen of them are `xfail(strict=True)`, counted and named in one place
-(`tests/test_known_gaps.py`) — bounds asserted over a fixture recorded *before*
-the change that would satisfy them, with the reason beside each mark, so the mark
-comes off loudly rather than quietly passing. `key_fact` is the clearest case:
-the field postdates both recorded runs, so its share is 0.0 on every fixture and
-the first press after it shipped is the first honest reading.
+Independent acceptance scenarios under `tests/acceptance/holdout/` drive real CLI
+and HTTP processes against isolated temporary data. They are opt-in through the
+holdout wrapper and use a local external-provider stand-in. The default unit
+suite reports them as skipped; final integration must execute every expected
+scenario with no skips. Current counts and executable evidence belong in the run
+report rather than a static architecture explanation.
 
 ## 15. Evaluation
 
-Everything above produces output; nothing above says whether it is any good.
-Choice 0019 gives it its shape; this section is the mechanism.
-
 ![How the evaluation works](eval-architecture.png)
 
-**Five layers, cheapest first**, split across two packages: the free half is
-product code in `ainews/quality/` and runs on every press, the paid half is
-`ainews/evals/` and nothing in the application imports it. That boundary is
-mechanical rather than a judgement made at each import — `evals/` is the package
-that costs money, and the arrow only ever points from it to `quality/` (ADR 0033).
+Free checks in `quality/` read canonical English against article evidence and
+store actionable content-floor, numeral, word-budget and tag measurements at
+publication. Production ranking stores agreement independently. The web reads
+those stored measurements without importing paid evaluation code.
 
-1. **Deterministic checks over stored rows** (`quality/checks.py`) — pure
-   functions, rows in and numbers out: word budgets and the sentence histogram,
-   numerals in the summary that the article body did not contain (after a
-   Turkish/English normaliser, so "12,9 milyar" meets "$12.9 billion"), the tag
-   vocabulary's singleton share, the importance spread, the tier shape, how far
-   the ranker's order departs from the free importance-then-weight order,
-   importance-5 stories with no published story in their dedupe cluster, and the
-   editor's-note shape. One of them checks *content* rather than shape:
-   `content_floor` asks whether the summariser named the figure, name, version or
-   date that made the story news, whether that key fact survived into the writing,
-   and whether a numeral the body carried reached the summary at all — because a
-   regression to three generic, numberless sentences passes every shape check
-   there is, and passes the grounding judge too, having asserted nothing.
+The reader reports concrete wrong facts, relevance, duplicates or placement,
+with optional notes. Only wrong_fact examples can be compared with the grounding
+judge; wrong-only examples cannot establish precision, specificity or calibrated
+quality. Old positive verdicts and retired evaluation rows remain historical data.
 
-   `persist` runs these over the day it has just published and stores the result
-   on the bulletin, so they reach the person who pressed the button without a
-   terminal (§7.7). `ainews eval record --run <id>` additionally writes a bulletin
-   to `tests/fixtures/runs/<date>_<lang>.json` — deterministic, one story per
-   line, numerals taken from the text the model was shown, **never the article
-   body** (the repository is public) — and `tests/test_quality_checks.py` asserts
-   bounds over every fixture, offline. Re-recording a fixture is a reviewed diff,
-   the same way a prompt is.
-2. **The reader's verdict** (`verdicts`, `POST /verdict`, `_story_foot.html`) —
-   two words under every story, *Doğru · Yanlış*, saved in place by HTMX, and on a
-   *Yanlış* a second row asking which of four claims failed: the fact, the
-   relevance, the duplicate, or the place the editor gave it. Binary and not a
-   scale, because a person can say "wrong" in one click and cannot honestly say
-   "3"; four reasons because a story block asserts four separate things, and one
-   word covering all of them counted a reader who correctly spotted an irrelevant
-   story *against* a grounding judge that had reported nothing wrong and was
-   right. Only `wrong_fact` calibrates the judge; the other three are counted on
-   their own and measure the relevance call, the dedupe and the ranker — which had
-   never had a human measurement of any kind.
+Paid `eval judge` and `eval compare` are explicit CLI commands with pre-call cost
+guards. The standalone paid ranking experiment is removed; production still uses
+three shuffled rank calls. Report generation is free, ignores retired diagnostic
+keys, appends rather than rewrites dated records, and totals each recorded digest
+run once. Prompt hashes identify judge conditions. Translation completeness is
+guarded before publication; canonical checks do not claim translation accuracy.
 
-   They are drawn **at rest**, not under the pointer. Hiding them until hover was
-   argued from a page being read far more often than it is judged; it collected
-   five labels over 138 summaries in three days, and on a touch screen
-   `.item:hover` never fired at all. Every label is readable back at
-   `/runs/verdicts`, opened from the count on `/runs`.
-3. **The sampled grounding judge** (`evals/judge.py`, `ainews eval judge`) —
-   `gpt-5.6-terra` at temperature 0 reads the body the summariser read and answers
-   one binary question: does the summary state anything as fact the text does not
-   support? The why-it-matters line is the editor's inference and is failed only
-   for an invented fact, not for drawing a conclusion. Twelve summaries a run,
-   seeded, and **drawn from the published stories first**: the reader labels what
-   the page shows, and a sample drawn uniformly over ninety summaries holds one or
-   two of the fifteen the reader ever saw, so a judgement and a label almost never
-   land on the same story. Cost estimated from body
-   length and refused above `--max-cost` before the first call; one `eval_results`
-   row per judgement. `--labelled` judges every summary that carries a verdict and
-   prints **TPR and TNR separately, never one accuracy figure** — the classes are
-   unbalanced, and a single number would hide the only failure worth catching —
-   and, beside them, **precision**: of the summaries the judge failed, the share
-   the reader agreed were wrong. For a tool with one reader that is the number
-   acted on; TPR needs the reader to find what the judge missed, which on a
-   mostly-right digest is hundreds of labels away, while precision needs one label
-   per judge failure, and `/runs/verdicts` asks for exactly that one, with the
-   judge's sentence quoted and the two words under it. Below
-   `MIN_LABELS_PER_CLASS = 30` it states the sample size and refuses to claim a
-   rate at all — five labels is not a calibration and a number computed from them
-   would be the one dishonest figure in a layer whose whole subject is honesty.
-4. **The rank-stability probe** (`evals/stability.py`, `ainews eval
-   rank-stability`) — shuffles the candidate table three ways, ranks each, and
-   scores the readings on `min(τ, chance-corrected Jaccard)` against a gate of
-   0.6. Both halves are needed and neither is enough: three readings can pick the
-   same fifteen in three unrelated orders, or order five identically while
-   disagreeing about which five belong. The Jaccard is corrected because fifteen
-   picks out of twenty-seven candidates overlap 38% by coin flip — an uncorrected
-   set score measures the pool, not the ranker — and it is *normalised* by the
-   room above chance rather than having chance subtracted, since subtracting caps
-   a perfect ranker at 0.615 and a 0.6 gate would then be unreachable by
-   arithmetic. The same number is what a press stores on `bulletins.agreement`
-   (§7.6), so the production run reports it and the probe is the off-line check
-   rather than the only reading. A call that fell back to importance order records
-   `passed = None`: a score over a deterministic fallback measures nothing.
-5. **The prompt comparison** (`evals/compare.py`, `ainews eval corpus` /
-   `compare`) — thirty to fifty article bodies frozen out of the archive into a
-   gitignored JSONL file, and a command that summarises every one of them with two
-   prompts and prints the checks side by side. Same bodies, same model, same seed,
-   so the only difference is the prompt. It names no winner: the numbers are shape
-   and content floors, not a preference. About $0.02 a comparison, refused above
-   `--max-cost` before the first call — which is how a prompt can be changed on
-   evidence without buying a production run to find out.
-
-`ainews eval report` reads the verdicts, the judge and probe rows and the checks —
-preferring the ones the press stored on the bulletin and recomputing only where a
-bulletin predates them, and saying on the page which of the two it drew — then
-appends one dated section to `docs/evals.md` with every number beside the function
-that produced it. A section is never edited. A run whose block would be
-byte-identical to one already in the file is written as one line pointing back
-rather than repeated, and `--run` narrows to one run, so the record grows by the
-run count rather than by the report count. Every measurement row carries the
-twelve-character hash of the prompt it ran under, and the report says out loud
-when a calibration averages two of them, or when the prompt now on disk is not the
-one the rows were measured against.
-
-[`EVALUATING.md`](EVALUATING.md) is the other half of that file: the record is
-dated numbers, the manual is what each number means, when it is worth believing,
-and how to add a check.
-
-**Measured on the first run** (91 stories): 4.4% of summaries over the 55-word
-budget, two ungrounded figures, 67.6% tag singletons, ranker/fallback overlap 6 of
-11, one importance-5 story left unrepresented, and a rank stability of **τ 0.47**
-with a raw top-N Jaccard of 0.53. The second run measured τ 0.50. Both are under
-the 0.6 gate, both were taken while the page still ignored the ranker's order, and
-both predate the chance correction — so the first press after all of that is the
-first reading that counts. One run is one measurement in any case: what the gate
-asks for is a run of them.
+The command reference, every retained signal's interpretation and the action it
+can trigger live in [EVALUATING.md](EVALUATING.md).
 
 ## 16. Looking inside one call
 
@@ -1241,7 +1127,7 @@ The files themselves, with the rejected alternatives beside each choice, are in
 
 | № | Choice | Since revised? |
 |---|---|---|
-| 0001 | `gpt-5.6-luna` for every LLM node | — |
+| 0001 | `gpt-5.6-luna` for every LLM node | Default updated to GPT-6 Luna by issue #11; judge remains independent |
 | 0002 | FastAPI + Jinja + HTMX, no Node toolchain | — |
 | 0003 | SQLite in WAL mode, FTS5 for search | — |
 | 0004 | APScheduler in-process, one uvicorn worker | the digest job superseded by 0015; the structure stands |
@@ -1257,7 +1143,7 @@ The files themselves, with the rejected alternatives beside each choice, are in
 | 0014 | No lead story, and a side column that looks like a bar | partly superseded by 0021 and 0024 |
 | 0015 | The digest is started by a person, and the page advises when | — |
 | 0016 | The shell stops whispering: nothing under 12px, sentence case in `i18n.py` | — |
-| 0017 | The switch translates the interface; the press chooses the bulletin's language | — |
+| 0017 | The switch translates the interface; the press chooses the bulletin's language | superseded by 0035: one bilingual bulletin, one selection |
 | 0018 | Per-call tracing in a local Phoenix, behind a dev profile | — |
 | 0019 | Evaluation is a sibling command, not a test; the reader's verdict is the ground truth | amended by 0029 and 0033; §2's boundary now runs between `quality/` and `evals/` |
 | 0020 | The model is chosen at the press; the environment is only the default | — |
@@ -1270,18 +1156,18 @@ The files themselves, with the rejected alternatives beside each choice, are in
 | 0027 | A ceiling on the one press that spends, because the operator is not the author | — |
 | 0028 | The schema is a migration chain, and the amendments retire | — |
 | 0029 | The article and the web context are two columns, and history is `unknown` | the repair path partly superseded by 0030 |
-| 0030 | A summary belongs to an article, a bulletin belongs to a day, and the editor returns a tier | §5's agreement refined by 0033 |
+| 0030 | A summary belongs to an article, a bulletin belongs to a day, and the editor returns a tier | agreement refined by 0033; bilingual storage refined by 0035 |
 | 0031 | N is a ceiling with a floor, and relevance is judged by the summariser | — |
 | 0032 | The checkpointer comes out and the graph stays | — |
 | 0033 | The evaluation is the operator's, and the free half of it is product code | — |
 | 0034 | The demo is a recording of real days, and every page says so | — |
+| 0035 | One English selection has two complete stored language views | — |
 
 ## 18. What is not built, and why
 
 | Not built | Why not |
 |---|---|
 | E-mail or Telegram delivery | The tool is opened, not pushed. Delivery would put a bulletin somewhere nobody chose to look, and it is the second half of a cadence this project deliberately does not have. |
-| Both languages in one run | Two bulletins is twice the model calls for a reader who reads one of them. |
 | arXiv and paper feeds | ~300 items a day would dominate ranking; important papers reach the digest through Hugging Face, Simon Willison and the outlets anyway. |
 | Embedding-based clustering | `token_set_ratio` at 85 is measured and cheap. What would change it is named in advance: golden duplicate pairs failing on new outlets. |
 | Auth, multi-user, a cloud deploy | One reader, one machine. Everything in Part I falls out of that. |
@@ -1289,12 +1175,6 @@ The files themselves, with the rejected alternatives beside each choice, are in
 | A second button that spends money | ADR 0023. The evaluation is a terminal command precisely because it is interesting enough to want on screen. |
 | Per-source sparklines | Tried against the data and refused: there is no series behind them worth a chart. |
 
-**Still open**, in the sense that a measurement rather than an opinion will settle
-it: the ranker's stability — τ 0.47 and 0.50 across two runs, both taken before
-the page read the ranker's order and before the chance correction, so the gate
-wants a reading on a press taken since — and the judge's calibration. Five reader
-labels are on record against thirty per class; the labels are now drawn at rest
-and a *wrong* names which claim failed, but the honest fix is labelling, and no
-generated golden set substitutes for it. `/runs/verdicts` asks for one answer per
-judge finding, which is the shorter road: precision needs a label per failure,
-where TPR needs the reader to find what the judge missed.
+Quality limitations are described with their operational consequences in
+[EVALUATING.md](EVALUATING.md). Fresh dated observations belong in `docs/evals.md`;
+current implementation gates belong in `docs/CURRENT_STATE.md`.

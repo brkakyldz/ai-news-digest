@@ -1,9 +1,7 @@
 """How much three readings of the same day agree, and what to publish from them.
 
 The ranker reads a numbered table and answers with numbers, so its answer can
-depend on the order it was shown. That was measured occasionally by
-`ainews eval rank-stability`, on a run already published, against an order the
-reader had already been given. Here it is the production path: every bulletin is
+depend on the order it was shown. Every bulletin therefore uses
 three shuffled rank calls, aggregated, and the aggregate ships with the number
 saying how much the three agreed (`bulletins.agreement`).
 

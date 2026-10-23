@@ -9,9 +9,8 @@ notable, brief - which is the page's own vocabulary, rather than a corrected 1-5
 importance on a scale the summariser was given a rubric for (ADR 0030).
 
 **It reads the day three times, shuffled.** The model answers with numbers from
-a table, so its answer can depend on the order the table was in; that was
-measured occasionally by `ainews eval rank-stability`, after publication, on an
-order the reader had already been given. Three shuffled calls are aggregated by
+a table, so its answer can depend on the order the table was in.
+Three shuffled calls are aggregated by
 Borda count and the bulletin ships with the number saying how much they agreed.
 The cost is two extra rank calls - the rank prompt is the summaries, not the
 articles, so this is cents on a run whose summarise step is dollars.
