@@ -178,7 +178,11 @@ async def load_candidates(session: AsyncSession, bulletin_id: int) -> list[Candi
 
 
 async def load_labelled(session: AsyncSession) -> list[Candidate]:
-    """Summaries marked wrong by the reader and carrying a body."""
+    """Summaries marked wrong by the reader and carrying a body.
+
+    Keep every category here so the report can count non-factual feedback
+    without asking the model to judge it.
+    """
     rows = (
         await session.execute(
             select(Summary, Article, Source, Verdict)
@@ -392,8 +396,13 @@ async def judge_labelled(
 ) -> tuple[Calibration, list[Outcome]]:
     settings = settings or get_settings()
     labelled = await load_labelled(session)
+    factual = [candidate for candidate in labelled if candidate.human_reason == "wrong_fact"]
     outcomes = await judge_candidates(
-        session, labelled, max_cost=max_cost, settings=settings, model=model
+        session, factual, max_cost=max_cost, settings=settings, model=model
     )
-    labels = [(o.candidate.human_verdict, o.candidate.human_reason, o.passed) for o in outcomes]
+    judged = {outcome.candidate.summary_id: outcome.passed for outcome in outcomes}
+    labels = [
+        (candidate.human_verdict, candidate.human_reason, judged.get(candidate.summary_id))
+        for candidate in labelled
+    ]
     return calibrate(labels), outcomes
