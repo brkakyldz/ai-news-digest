@@ -36,6 +36,7 @@ class StoryMarkup(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.story_ids = []
         self.story_text = {}
+        self.story_scales = {}
         self.tag_links = []
         self._anchor = None
         self._story = None
@@ -48,6 +49,8 @@ class StoryMarkup(HTMLParser):
             self._story = story_id.removeprefix("story-")
             self.story_ids.append(self._story)
             self.story_text[self._story] = []
+            scale = re.search(r"(?<![\w-])p([1-5])(?!\w)", attrs.get("class", ""))
+            self.story_scales[self._story] = scale.group(1) if scale else None
             self._story_depth = 1
         elif self._story and tag not in {
             "area",
@@ -251,7 +254,7 @@ def test_H11_R10_successful_bulletin_has_complete_english_and_turkish_prose(
         summaries = {
             row[0]: row[1:]
             for row in db.execute(
-                "SELECT id, title_local, summary, why_it_matters FROM summaries "
+                "SELECT id, language, title_local, summary, why_it_matters FROM summaries "
                 f"WHERE id IN ({','.join('?' for _ in ids)})",
                 ids,
             ).fetchall()
@@ -266,7 +269,8 @@ def test_H11_R10_successful_bulletin_has_complete_english_and_turkish_prose(
         }
     for summary_id, _, _, reason_en, reason_tr in items:
         assert summary_id in translations
-        title_en, summary_en, why_en = summaries[summary_id]
+        language_en, title_en, summary_en, why_en = summaries[summary_id]
+        assert language_en == "en"
         title_tr, summary_tr, why_tr, canonical_hash, model, tokens_in, tokens_out, cost = (
             translations[summary_id]
         )
@@ -283,8 +287,16 @@ def test_H11_R10_successful_bulletin_has_complete_english_and_turkish_prose(
     server = server_factory(root, db_path)
     english = archive_page(server, bulletin_id, "en")
     turkish = archive_page(server, bulletin_id, "tr")
-    assert StoryMarkup().page(english).story_ids == [str(value) for value in ids]
-    assert StoryMarkup().page(turkish).story_ids == [str(value) for value in ids]
+    english_markup = StoryMarkup().page(english)
+    turkish_markup = StoryMarkup().page(turkish)
+    expected_ids = [str(value) for value in ids]
+    assert english_markup.story_ids == expected_ids
+    assert turkish_markup.story_ids == expected_ids
+    for story_id in expected_ids:
+        assert english_markup.story_scales[story_id] in {"1", "2", "3", "4", "5"}
+        assert turkish_markup.story_scales[story_id] in {"1", "2", "3", "4", "5"}
+        assert english_markup.story_scales[story_id] == turkish_markup.story_scales[story_id]
+        assert "Türkçe başlık wave2" in " ".join(turkish_markup.story_text[story_id])
     assert "Canonical English" in english
     assert "Türkçe özet wave2" in turkish
     assert "Türkçe editör notu wave2" in turkish

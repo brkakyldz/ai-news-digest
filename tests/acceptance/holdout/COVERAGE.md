@@ -2,7 +2,7 @@
 
 | Scenario | Requirements | Observable behavior covered |
 |---|---|---|
-| H11 | R10 | Successful digest stores English canonical summaries and complete Turkish per-summary prose; publication has bilingual English bulletin, translated editor note and reasons; EN/TR archive membership, order and tiers agree. |
+| H11 | R10 | Successful digest stores English canonical summaries and complete Turkish per-summary prose; publication has bilingual English bulletin, translated editor note and reasons; EN/TR archive membership and order agree; every selected canonical summary is English, each Turkish card contains its translated headline, and matching story roots carry equal public `.p1`–`.p5` scale classes. |
 | H12 | R10 | Incomplete editorial translation records an error run and paid cost, leaves the previous bulletin current, and writes no items for the failed run. |
 | H13 | R10 | Retry ranks the existing English pool, buys no summaries, reuses committed story translations without new translation calls or duplicated translation rows/cost. |
 | H14 | R10 | Legacy single-language bulletin remains readable under both UI languages with an honest language label; an unselected English summary without Turkish cache remains present and visibly English. |
