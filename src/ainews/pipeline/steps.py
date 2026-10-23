@@ -159,14 +159,12 @@ async def step(run_id: str, node: str) -> AsyncIterator[StepRecord]:
         await _write(run_id, node, record)
 
 
-async def record_fan_out(state: PipelineState) -> None:
+async def record_fan_out(state: PipelineState, rank_started_at: datetime | None = None) -> None:
     """The summarize node's row, assembled after the fact. Never raises.
 
-    Called before `persist_run` writes the digest, so the guard here is not
-    decoration: an unhandled read error would take the whole paid run with it
-    and leave nothing persisted, which is the opposite of what a bookkeeping
-    table is for. `_write` swallows its own insert; this swallows the two
-    lookups that precede it.
+    Called as ranking begins, before ranking or translation can fail, so the
+    completed summaries remain countable as paid work. `_write` swallows its
+    own insert; this also swallows the lookups that precede it.
 
     The fan-out is the one node that cannot time itself: it is a hundred
     concurrent branches, and none of them knows when the first started or the
@@ -175,21 +173,22 @@ async def record_fan_out(state: PipelineState) -> None:
     window LangGraph spends running the branches, plus the scheduling of one
     superstep either side.
 
-    Called from `persist_node`, because by then both neighbours have rows and
-    the state carries every branch's tokens.
+    Called from `rank_node`, where the state carries every completed branch's
+    tokens and the fan-out has ended.
     """
     try:
-        await _fan_out_row(state)
+        await _fan_out_row(state, rank_started_at)
     except Exception:
         log.exception("could not record the fan-out of run %s", state.get("run_id"))
 
 
-async def _fan_out_row(state: PipelineState) -> None:
+async def _fan_out_row(state: PipelineState, rank_started_at: datetime | None) -> None:
     run_id = state["run_id"]
     payloads = state.get("summaries") or []
+    failed = state.get("summary_failures") or []
     n_in = len(state.get("candidate_ids") or [])
     if not n_in:
-        # The conditional edge jumped straight to `persist`: nothing was
+        # The conditional edge skipped `summarize`: nothing was
         # summarised, so there is no step to describe.
         return
 
@@ -207,11 +206,9 @@ async def _fan_out_row(state: PipelineState) -> None:
     if enrich is None or enrich.finished_at is None:
         log.warning("run %s: no bracket for the fan-out; step not recorded", run_id)
         return
-    # `rank` returns early without a row when every branch failed, which is the
-    # case where this step matters most. The fan-out ended a moment ago in that
-    # case - `persist` is running - so close it on the clock rather than losing
-    # the row that says a hundred branches produced nothing.
-    ended = rank.started_at if rank is not None else utcnow()
+    # `rank` has no saved row yet when this call runs, so its caller supplies
+    # that boundary. Direct calls without it close on the clock.
+    ended = rank.started_at if rank is not None else rank_started_at or utcnow()
 
     # One row per summary even if a retried superstep appended a payload twice,
     # for the same reason `persist_run` collapses them: the count on screen has
@@ -227,8 +224,8 @@ async def _fan_out_row(state: PipelineState) -> None:
     # for the one that just spent money.
     record.spend(
         state.get("model_summarize") or get_settings().openai_model_summarize,
-        sum(p["tokens_in"] for p in payloads),
-        sum(p["tokens_out"] for p in payloads),
+        sum(p["tokens_in"] for p in payloads) + sum(p["tokens_in"] for p in failed),
+        sum(p["tokens_out"] for p in payloads) + sum(p["tokens_out"] for p in failed),
     )
     if n_out < n_in:
         record.status = "partial"

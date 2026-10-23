@@ -174,33 +174,27 @@ def test_the_press_asks_before_it_spends(client: TestClient, digest: Bulletin) -
     assert 'hx-get="/runs/confirm' in client.get("/runs/action").text
 
 
-def test_the_question_carries_the_output_language_and_starts_on_the_pages(
+def test_the_question_names_both_languages_and_has_no_paid_language_choice(
     client: TestClient, digest: Bulletin
 ) -> None:
-    """Which language the bulletin is written in is asked at the press.
-
-    It used to be read off the shell's TR/EN switch, so a reader who wanted
-    English buttons also, silently, bought an English bulletin (ADR 0017).
-    """
+    """New publications always carry both languages; only models are chosen."""
     asked = client.get("/runs/confirm?lang=tr").text
-    assert 'class="seg seg--out"' in asked
+    assert 'class="seg seg--out"' not in asked
     assert 'aria-current="true"' in asked
-    assert "out=tr" in asked and "out=en" in asked
-    assert (
-        'hx-post="/runs/start?lang=tr&amp;out=tr&amp;ms=gpt-5.6-luna&amp;mr=gpt-5.6-luna"' in asked
-    ), "it starts on the page's language and the configured models"
+    assert "English + Türkçe" in asked
+    assert 'hx-post="/runs/start?lang=tr&amp;ms=gpt-6-luna&amp;mr=gpt-6-luna"' in asked
 
-    # Choosing the other slot is the same swap the question itself is: a GET of
-    # this fragment with the other `out`, no client state anywhere.
+    # Legacy links still render the same bilingual confirmation.
     other = client.get("/runs/confirm?lang=tr&out=en").text
-    assert "&amp;out=en&amp;" in other
+    assert "out=en" not in other
+    assert "English + Türkçe" in other
     assert "Evet, çalıştır" in other, "the shell is still Turkish"
 
 
-def test_the_press_produces_the_language_it_was_asked_for(
+def test_the_press_ignores_legacy_output_language(
     monkeypatch: pytest.MonkeyPatch, settings: Settings, engine: AsyncEngine
 ) -> None:
-    """`?out=` reaches the pipeline, and `?lang=` never does."""
+    """A stale `?out=` link cannot change the bilingual publication contract."""
     from ainews.pipeline import runner
 
     settings.openai_api_key = "sk-test"
@@ -213,9 +207,9 @@ def test_the_press_produces_the_language_it_was_asked_for(
     monkeypatch.setattr(runner, "run_digest", _record)
 
     with TestClient(create_app(settings)) as client:
-        client.post("/runs/start?lang=tr&out=en")
+        client.post("/runs/start?lang=tr&out=tr")
 
-    assert produced == ["en"], "the shell's language is not what gets written"
+    assert produced == ["en"], "a legacy output value cannot select paid language"
 
 
 def test_the_first_run_is_told_what_it_will_do(
@@ -226,6 +220,7 @@ def test_the_first_run_is_told_what_it_will_do(
     is no measured number to say."""
     asked = client.get("/runs/confirm").text
     assert "kaynak taranacak" in asked
+    assert "English + Türkçe" in asked
     assert "tuttu" not in asked, "no invented estimate before the first run"
 
 
@@ -719,6 +714,28 @@ def test_the_why_plate_is_never_the_surface_it_is_inset_into(client: TestClient)
     plate, panel = token("plate"), token("panel")
     assert plate[0] != panel[0], "the plate vanishes into the card in the light theme"
     assert plate[1] != panel[1], "the plate vanishes into the card in the dark theme"
+
+
+def test_a_stylesheet_is_revalidated_rather_than_assumed_fresh(client: TestClient) -> None:
+    """The failure is silent on the server and total on the screen.
+
+    `/static/theme.css` keeps one URL for the life of the project, and a
+    response carrying an ETag and no `Cache-Control` lets the browser invent a
+    freshness window out of the file's age - a tenth of it, by the usual
+    heuristic. A container that had served the same stylesheet for five days
+    bought about twelve hours of that, so a reader arriving after the next
+    deploy drew today's markup with the previous stylesheet: none of the class
+    names the shell is built on matched, and the request that would have shown
+    it was never sent.
+    """
+    for asset in ("/static/theme.css", "/static/fonts.css"):
+        response = client.get(asset)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache"
+        # `no-cache` keeps the copy and requires the conditional request. It is
+        # only cheap because that request has an answer: without the ETag every
+        # page view is a fresh download of the whole stylesheet.
+        assert response.headers["etag"]
 
 
 # -- the two dictionaries ------------------------------------------------------

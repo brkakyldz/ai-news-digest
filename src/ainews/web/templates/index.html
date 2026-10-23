@@ -12,8 +12,8 @@
   {% if editor_note %}
   <section class="brief">
     <div class="brief__b">
-      <p class="brief__l">{{ t.brief_label }}</p>
-      <div class="brief__t">{% for para in editor_note|paragraphs %}<p>{{ para }}</p>{% endfor %}</div>
+      <p class="brief__l">{{ t.brief_label }}{% if editor_note_language and editor_note_language != language %} · <span class="hint" lang="{{ editor_note_language }}">{{ t['lang_' ~ editor_note_language] }}</span>{% endif %}</p>
+      <div class="brief__t" lang="{{ editor_note_language or language }}">{% for para in editor_note|paragraphs %}<p>{{ para }}</p>{% endfor %}</div>
     </div>
     <p class="brief__m brief__c">{{ t.brief_meta.format(n=header.n_stories, s=header.n_sources, g=n_topics) }}</p>
   </section>

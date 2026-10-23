@@ -2,11 +2,12 @@
 
 A local-first LangGraph pipeline that reads the day's AI news so you don't have to
 open sixteen tabs. It polls RSS feeds every three hours, throws away the same
-story told by five outlets, summarises what is left with `gpt-5.6-luna`, ranks
+story told by five outlets, summarises what is left in English with `gpt-6-luna`, ranks
 the whole day three times over and keeps what the three readings agree on, and
-serves the result as a page you read over coffee.
+translates the selected stories and editorial text into Turkish, and serves both
+stored views as a page you read over coffee.
 
-One machine, one container, about **a dollar a month**.
+One machine, one container. Switching language keeps the same stories and order.
 
 ![The digest](docs/screenshots/digest.png)
 
@@ -25,17 +26,12 @@ every three hours and costs nothing. The digest spends money, so a person starts
 it — the page's job is to say when that is worth doing, and then get out of the
 way.
 
-**Nothing the model says is taken on trust.** Every summary carries a *doğru ·
-yanlış* under it, and a *wrong* asks which of the four claims failed — the fact,
-the relevance, the duplicate, or the place the editor gave it. Those labels are
-the only ground truth in the system: they are what a sampled grounding judge is
-calibrated against, and there are **five of them over 138 summaries** on the days
-on record, which is not enough to calibrate anything. So the judge is not
-calibrated, and nothing here says it is. `ainews eval report` prints the sample
-size beside every rate and refuses to state a hit rate under thirty labels per
-class; the free checks, which cost nothing and need no labels, run on every press
-and land on `/runs/<id>`. A number this tool cannot honestly produce is absent
-from the page rather than estimated.
+**A concrete error is useful feedback.** A story's *wrong* action asks which
+claim failed — the fact, relevance, duplicate, or editorial placement — and
+accepts an optional note. There is no positive-label chore. A sampled grounding
+judge helps find suspect claims, but wrong-only feedback cannot establish its
+precision or specificity. Free content, numeral, budget and tag checks run on
+every press and land on `/runs/<id>` alongside production ranking agreement.
 
 It is also a portfolio piece, so the parts usually skipped are not: tests that
 cover the failure modes rather than the happy path, and a reason written next to
@@ -45,7 +41,7 @@ every line that needed one.
 
 ![Architecture](docs/architecture.png)
 
-Six nodes, and each one exists because of a specific problem:
+Seven nodes, and each one exists because of a specific problem:
 
 | Node | Problem it solves |
 |---|---|
@@ -54,11 +50,12 @@ Six nodes, and each one exists because of a specific problem:
 | **enrich** | A linkblog gives you a sentence and someone else's link. Three tiers, cheapest first: the feed's own HTML, then the page itself, then one capped Tavily search. |
 | **summarize** | A `Send` fan-out, one branch per story, each returning a validated Pydantic model. A branch that fails becomes an error entry, not a dead run. |
 | **rank** | Importance was scored one article at a time, blind to the rest of the day. This is the only step that sees all of it — three times, over the same candidates shuffled three ways, aggregated by Borda count. The three readings' agreement is stored on the bulletin, so a day nobody agreed on says so. |
+| **translate** | Translates every selected headline, summary, consequence, editorial note and placement reason into Turkish. A matching cached translation is reused. Missing required prose fails the run before publication. |
 | **persist** | Publishes the day's bulletin over the summaries in view, runs the free quality checks on what it just published, and closes the run row with tokens, cost and status. |
 
 The repository is named *agent* and the graph is not one in the tool-calling
 sense: nothing in it decides which node runs next. A bulletin needs a fixed
-line of six nodes, one fan-out and structured output, and that is what it is.
+line of seven nodes, one fan-out and structured output, and that is what it is.
 
 A summary belongs to an article and a bulletin belongs to a day, so `summarize`
 commits each summary the moment it comes back: a run that dies at `rank` has
@@ -99,8 +96,9 @@ docker compose up --build
 Open <http://localhost:8000>. The database is empty on the first start, so go to
 **çalışmalar / runs** and press the button: it polls all sixteen feeds,
 summarises what it finds and writes the day's bulletin. One click gets a
-question, not a run — the confirmation asks which models to use and which
-language to write in, with the price per million tokens under them.
+question, not a run — the confirmation asks which models to use, with the price
+per million tokens underneath. Every new bulletin is available in English and
+Turkish; the top-bar switch changes the interface and stored prose together.
 
 After that the feeds keep being polled every three hours and nothing else happens
 by itself. `/runs` leads with when the last bulletin landed and a countdown to
@@ -111,7 +109,10 @@ improves the page instead of adding a second entry to the archive, and the
 version it replaced stays there as what the front page said at the time. The
 question tells you how many stories are waiting before you answer it. A press
 that dies half-way keeps every summary it had already paid for; there is nothing
-to resume, because the next press simply ranks them.
+to resume, because the next press ranks the existing pool and reuses completed
+translations. A required translation failure preserves the previous bulletin and
+appears in the run log. Existing single-language archive entries remain readable,
+with their original language labelled when needed.
 
 Without Docker — the recording:
 
@@ -125,7 +126,7 @@ and the real thing:
 
 ```bash
 uv sync
-uv run ainews digest --language tr
+uv run ainews digest
 uv run ainews serve
 ```
 
@@ -147,11 +148,11 @@ uv run ainews demo export # a fresh recording out of your own archive
 |---|---|
 | `/` | Today's bulletin: the day's brief, a topic filter with the day's impact spread on the end of it, what the editor published — fifteen is a ceiling, not a quota — and an expander for the rest of the day's relevant summaries. |
 | `/archive` | Past bulletins, by day. A day pressed twice is one entry that names its version. |
-| `/search` | Full-text over every summary ever written (SQLite FTS5, prefix-matched so Turkish suffixes stop mattering). |
+| `/search` | Canonical full-text search plus stored Turkish translations, projected into the chosen language without duplicate story IDs. |
 | `/sources` | Enable, disable or add a feed; last status per source. |
 | `/runs` | The advice block and the press, spend for today / 7 days / 30 days, the week's story counts, and every run with its cost, duration and errors. |
 | `/runs/<id>` | One run, node by node: which step took the time, which took the money, which model wrote it — and under it the free quality checks on the bulletin that run published, as they were computed at the press. |
-| `/runs/verdicts` | The sentences the grounding judge could not find in the article, each with the reader's two words under it, and the reader's own labels. |
+| `/runs/verdicts` | Claims the grounding judge could not find in the article, and categorized wrong-story feedback with optional notes. |
 
 ![Runs](docs/screenshots/runs.png)
 
@@ -162,7 +163,7 @@ the time went and what it cost, so "it was slow" resolves to a step:
 
 Every page wears the same shell: a left rail that is navigation and nothing else,
 and one bar across the top holding only the reader's own controls — search
-(`/` or Ctrl-K), interface language, theme. Cost and duration live on `/runs`,
+(`/` or Ctrl-K), reading/interface language, theme. Cost and duration live on `/runs`,
 with the run they belong to. The rail collapses to icons with the chevron by the
 brand.
 
@@ -176,7 +177,8 @@ link is shareable and a screenshot is reproducible from its URL.
 
 ## What it costs
 
-Measured, not estimated:
+Historical measurements from the single-language GPT-5.6 Luna pipeline in
+September 2026; these are not measurements of the new bilingual default:
 
 | | Summarised | Ranked | Tokens (in / out) | Cost | Time |
 |---|---|---|---|---|---|
@@ -185,20 +187,14 @@ Measured, not estimated:
 | A two-day delta | 20 | 20 | 32,195 / 12,363 | **$0.021** | 58s |
 | A press over a standing pool | 32 | 129 | 137,057 / 22,563 | **$0.055** | 63s |
 
-Two columns, because the bill has two halves that scale differently: a press pays
-for the stories that are new and re-ranks the whole window around them (ADR 0030).
-Summarising is **$0.0011 a story**. Ranking is three passes over the standing
-pool — **$0.020 at 129 candidates** — and does not care how many of them are new.
-
-Sixteen feeds deliver about **18 stories a day** after dedupe, which puts an
-ordinary press at **$0.034** and a month of daily presses at **~$1** against a $10
-budget. The measured run above cost $0.055 because three presses in six days left
-more standing in the pool than a daily one does. Tavily stays on its free tier
-behind a 30-credit daily cap, and in practice rarely gets there, because two
-cheaper enrichment tiers run first.
-
-That price is the reason every article gets summarised instead of a cheap
-title-only filter deciding in advance what is worth reading.
+A new press pays for new English summaries, three rankings of the standing pool,
+missing selected-story translations and that bulletin's translated editorial text.
+Reading either language is free. GPT-6 Luna Standard short-context prices were
+verified on 2026-10-23 at **$0.10 input / $0.50 output per million tokens**; see
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing). Recorded usage
+is costed at the selected model, and the report sums each digest run once, even
+when several bulletin versions reuse its summaries. The default estimated
+per-press ceiling remains **$1**. Tavily has its separate daily credit cap.
 
 ## Design, in one line
 
@@ -212,18 +208,17 @@ the impact meter. The reasoning is in
 
 ## Is it any good?
 
-Output quality is a number a command regenerates, never a claim in a document.
-`pytest` stays offline and free; anything that spends money is a sibling command
-that says so and refuses above a cap.
+Each press stores its free product checks and shows them on its run detail.
+Paid grounding and prompt comparisons are explicit CLI commands with cost caps;
+their measurements complement those stored signals. `pytest` stays offline and free.
 
 ```bash
-uv run ainews eval record --run latest          # a run → a JSON fixture; no key, no network
-uv run ainews eval judge --run latest           # 12 sampled summaries, grounding, ~$0.05
-uv run ainews eval rank-stability --run latest  # 3 shuffled rank calls, ~$0.01
+uv run ainews eval record --bulletin latest    # a bulletin → a JSON fixture; no key, no network
+uv run ainews eval judge --bulletin latest     # sampled grounding; estimates before spending
 uv run ainews eval corpus                       # freeze 40 article bodies; no key, gitignored
 uv run ainews eval compare --prompt-a a.md --prompt-b b.md   # same bodies, two prompts, ~$0.02
-uv run ainews eval report                       # every number, appended to docs/evals.md
-uv run ainews eval report --run <id>            # one run; unchanged numbers fold to a line
+uv run ainews eval report                       # actionable checks, appended to docs/evals.md
+uv run ainews eval report --bulletin <id>       # one detail section; spend window unchanged
 ```
 
 The free half of that — the deterministic checks, which read rows and call
@@ -233,23 +228,19 @@ the application imports it: deleting the package breaks one CLI subcommand and
 nothing else. [`docs/EVALUATING.md`](docs/EVALUATING.md) is the manual — what
 each number means, when it is worth believing, and how to add a check.
 
-The first measurements are in [`docs/evals.md`](docs/evals.md): 4.4% of summaries
-over the word budget, two ungrounded figures, and a rank stability of **τ 0.47
-and 0.50** on the two real runs — both under the 0.6 gate. Those two readings
-were taken while the page still ignored the ranker's order, and the gate has
-since become `min(τ, chance-corrected Jaccard)`: fifteen picks out of twenty-seven
-candidates overlap 38% by coin flip, so an uncorrected set score measures the
-size of the pool rather than the ranker. The press pictured above is the first
-reading that counts on both halves, and the three passes agree **0.40** — still
-under the gate, and now about an order the page reads.
+[`docs/evals.md`](docs/evals.md) preserves the dated historical measurements.
+New reports keep content-floor checks, numeral grounding/recall, word budgets,
+tag usefulness, production agreement, categorized wrong feedback and recorded
+product/eval spend. The standalone paid rank-stability experiment is removed;
+the three production rank calls and their agreement remain. Missing agreement
+is shown explicitly. Canonical English is the quality-check input; these checks
+do not measure Turkish translation accuracy.
 
 ![How the evaluation works](docs/eval-architecture.png)
 
-The judge's failures are the part worth looking at, so they have a page rather
-than a line in a log: the sentence it could not find in the article, with the
-same *doğru · yanlış* under it that the stories carry. Answering one labels the
-judge, which is the only way a one-reader tool learns whether its evaluator is
-right.
+The judge's suspect claims have a page rather than a line in a log. Mark a
+concrete problem and its reason there; an unreported story is never counted as
+a positive label.
 
 ![The reader's verdicts and the judge's failures](docs/screenshots/verdicts.png)
 

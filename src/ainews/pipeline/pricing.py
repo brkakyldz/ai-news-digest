@@ -7,8 +7,8 @@ second and a third of startup to render `--model-summarize`'s choices would be a
 tax on every command for the benefit of one.
 
 So this module imports nothing but the standard library. The prices are per
-million tokens and come from the model page read on 2026-09-04 (ADR 0001); they
-are checked into the repo on purpose - a cost the dashboard shows has to be
+million tokens and come from model pages read on 2026-09-04 and 2026-10-23
+(ADR 0001); they are checked into the repo on purpose - a cost the dashboard shows has to be
 reproducible, and a figure fetched at runtime is not.
 
 `PRICES` is the single source for both jobs. Adding a tier is one line here: it
@@ -22,10 +22,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ainews.pipeline.agreement import RANK_PASSES
+
 log = logging.getLogger(__name__)
 
 # USD per 1M tokens: (input, output).
 PRICES: dict[str, tuple[float, float]] = {
+    "gpt-6-luna": (0.10, 0.50),
     "gpt-5.6-luna": (0.20, 1.20),
     "gpt-5.6-terra": (2.00, 12.00),
     "gpt-5.6-sol": (4.00, 20.00),
@@ -72,6 +75,10 @@ def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
 # change whether it fires.
 SUMMARIZE_TOKENS_PER_ARTICLE = (1438, 513)
 RANK_TOKENS_PER_CANDIDATE = (172, 105)
+# Conservative translation envelope per selected story plus the shared
+# editorial call; the guard must still protect a zero-new-candidate retry.
+TRANSLATE_TOKENS_PER_STORY = (900, 900)
+EDITORIAL_TRANSLATE_TOKENS = (1800, 1000)
 
 
 class CostCeiling(RuntimeError):
@@ -94,7 +101,14 @@ class CostCeiling(RuntimeError):
         self.n_candidates = n_candidates
 
 
-def estimate_digest_cost(n_candidates: int, model_summarize: str, model_rank: str) -> float:
+def estimate_digest_cost(
+    n_candidates: int,
+    model_summarize: str,
+    model_rank: str,
+    *,
+    rank_pool: int | None = None,
+    selected: int | None = None,
+) -> float:
     """What a press over `n_candidates` articles is expected to cost.
 
     Priced per node at the model that will run it, because since ADR 0020 the
@@ -104,9 +118,24 @@ def estimate_digest_cost(n_candidates: int, model_summarize: str, model_rank: st
     """
     summarize_in, summarize_out = SUMMARIZE_TOKENS_PER_ARTICLE
     rank_in, rank_out = RANK_TOKENS_PER_CANDIDATE
-    return estimate_cost(
+    rank_pool = n_candidates if rank_pool is None else rank_pool
+    selected = 0 if selected is None else selected
+    total = estimate_cost(
         model_summarize, n_candidates * summarize_in, n_candidates * summarize_out
-    ) + estimate_cost(model_rank, n_candidates * rank_in, n_candidates * rank_out)
+    ) + estimate_cost(
+        model_rank,
+        RANK_PASSES * rank_pool * rank_in,
+        RANK_PASSES * rank_pool * rank_out,
+    )
+    if selected:
+        translate_in, translate_out = TRANSLATE_TOKENS_PER_STORY
+        editorial_in, editorial_out = EDITORIAL_TRANSLATE_TOKENS
+        total += estimate_cost(
+            model_summarize,
+            selected * translate_in + editorial_in,
+            selected * translate_out + editorial_out,
+        )
+    return total
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,11 +148,15 @@ class ModelChoice:
 
     @property
     def short(self) -> str:
-        """The last segment of the id - `gpt-5.6-luna` is `luna` on a button.
+        """A compact unique label for the model choice.
 
-        Derived rather than stored: a second name for a model is a second place
-        to keep it in step, and the ids already differ in exactly this segment.
+        Most model IDs have a unique final segment. Keep both Luna tiers
+        distinguishable in the menu without duplicating their IDs elsewhere.
         """
+        if self.id == "gpt-6-luna":
+            return "6 luna"
+        if self.id == "gpt-5.6-luna":
+            return "5.6 luna"
         return self.id.rsplit("-", 1)[-1]
 
 

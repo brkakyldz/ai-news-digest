@@ -1,0 +1,4 @@
+{
+  "paths": ["tests/acceptance/holdout/"],
+  "reason": "Independent acceptance scenarios are owned by the blind author, never the implementation workers. The owner approved a GPT-6 Luna author exception for this delivery."
+}

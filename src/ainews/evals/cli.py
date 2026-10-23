@@ -2,8 +2,7 @@
 
 Kept out of `ainews/cli.py` so the product's entry point gains three lines, not
 a second parser tree. `record` needs no key and no network; `judge` and
-`rank-stability` spend money and say so before the first call; `report` reads
-what the others wrote.
+`report` reads what the other commands wrote.
 """
 
 from __future__ import annotations
@@ -60,20 +59,7 @@ def add_eval_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
     judge.add_argument(
         "--labelled",
         action="store_true",
-        help="calibration: judge every summary that has a reader's verdict, print TPR/TNR",
-    )
-
-    stability = evals.add_parser(
-        "rank-stability", help="shuffle the rank table N ways and measure agreement"
-    )
-    stability.add_argument("--bulletin", default="latest", help=BULLETIN_HELP)
-    stability.add_argument("--times", type=int, default=3)
-    stability.add_argument("--seed", type=int, default=0)
-    stability.add_argument(
-        "--model",
-        choices=MODEL_NAMES,
-        default=None,
-        help="model to probe (default: OPENAI_MODEL, the ranker)",
+        help="diagnostic: judge summaries marked wrong_fact by the reader",
     )
 
     corpus = evals.add_parser(
@@ -178,29 +164,6 @@ async def _judge(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _stability(args: argparse.Namespace) -> int:
-    from ainews.evals.stability import rank_stability
-    from ainews.pipeline.runner import resolve_bulletin
-
-    settings = get_settings()
-    if not settings.llm_configured:
-        print(NO_KEY.replace("the judge", "the rank probe"), file=sys.stderr)
-        return 2
-    await init_db(get_engine())
-    async with session_scope() as session:
-        bulletin_id = await resolve_bulletin(session, args.bulletin)
-        report = await rank_stability(
-            session, bulletin_id, times=args.times, seed=args.seed, model=args.model
-        )
-    print(
-        f"bulletin {bulletin_id}: {report.times} shuffled rank calls on {report.model} "
-        f"against the published order, mean tau {report.tau:.3f}, "
-        f"mean top-N Jaccard {report.jaccard:.3f}, ~${report.est_cost_usd:.4f}"
-        + (f", {report.n_fallback} call(s) failed" if report.n_fallback else "")
-    )
-    return 0
-
-
 async def _corpus(args: argparse.Namespace) -> int:
     from ainews.evals.compare import freeze_corpus, write_corpus
 
@@ -273,8 +236,6 @@ async def run_eval(args: argparse.Namespace) -> int:
             return await _record(args.bulletin, args.out)
         if args.eval_command == "judge":
             return await _judge(args)
-        if args.eval_command == "rank-stability":
-            return await _stability(args)
         if args.eval_command == "corpus":
             return await _corpus(args)
         if args.eval_command == "compare":

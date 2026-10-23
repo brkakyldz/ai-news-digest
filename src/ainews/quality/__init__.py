@@ -26,16 +26,10 @@ from __future__ import annotations
 
 from ainews.quality.checks import (
     content_floor,
-    editor_note_shape,
-    fallback_order,
-    importance_distribution,
     numeral_values,
     ranked_order,
-    ranker_vs_fallback,
     tag_vocabulary,
-    tier_shape,
     ungrounded_numerals,
-    unrepresented_fives,
     word_budget,
 )
 from ainews.quality.stories import day_stories, published_checks
@@ -43,16 +37,10 @@ from ainews.quality.stories import day_stories, published_checks
 __all__ = [
     "content_floor",
     "day_stories",
-    "editor_note_shape",
-    "fallback_order",
-    "importance_distribution",
     "numeral_values",
     "published_checks",
     "ranked_order",
-    "ranker_vs_fallback",
     "tag_vocabulary",
-    "tier_shape",
     "ungrounded_numerals",
-    "unrepresented_fives",
     "word_budget",
 ]

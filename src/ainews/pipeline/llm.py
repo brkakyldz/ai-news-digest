@@ -78,6 +78,11 @@ def make_llm(model: str, settings: Settings | None = None, **kwargs: Any) -> Cha
         raise RuntimeError(
             "OPENAI_API_KEY is not set. Copy the environment template to .env and fill it in."
         )
+    # GPT-6 Luna only accepts the provider's default temperature. Keep custom
+    # temperatures for every other model, including explicit legacy overrides.
+    if model == "gpt-6-luna":
+        kwargs.pop("temperature", None)
+
     return ChatOpenAI(
         model=model,
         api_key=settings.openai_api_key,

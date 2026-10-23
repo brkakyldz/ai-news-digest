@@ -135,6 +135,7 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "day_stories": "{d}: {n} haber",
         "brief_meta": "{n} haber · {s} kaynak · {g} konu",
         "why_label": "Neden önemli",
+        "placement_label": "Sıralama gerekçesi",
         # The three band names, and the spread's label above. The Turkish is
         # *etki* because what the bands report is the story's weight in the
         # field; *ilgi* names the reader's own curiosity, which nothing here
@@ -145,7 +146,6 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "open_source": "Kaynağa git",
         # The reader's verdict on a summary (PLAN-EVALS E2). Two words, no
         # question mark: they sit on the foot line beside the other actions.
-        "verdict_ok": "Doğru",
         "verdict_wrong": "Yanlış",
         "verdict_note": "Neyi yanlış yaptı? (isteğe bağlı)",
         "verdict_save": "Kaydet",
@@ -174,25 +174,28 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
             "çalıştır düğmesi bir anahtar olmadan çalışmaz."
         ),
         "quality_heading": "Bu bültenin ölçümleri",
+        "quality_agreement": "Editörlerin uyumu",
         "quality_lead": "Hepsi ücretsiz, baskının kendisi hesapladı.",
-        "quality_key_fact": "Haberi haber yapan şeyi adlandırdı",
-        "quality_key_fact_kept": "Ve bunu özete taşıdı",
-        "quality_numeral_recall": "Metindeki bir rakamı özete taşıdı",
-        "quality_budget": "Özet kelime sınırında kaldı",
+        "quality_key_fact": "Haberi haber yapan ana olguyu belirledi",
+        "quality_key_fact_kept": "Ana olguyu özette korudu",
+        "quality_numeral_recall": "Metindeki rakamı özette korudu",
+        "quality_budget": "55 kelimeyi aşan özetler",
+        "quality_why_budget": "20 kelimeyi aşan etki açıklamaları",
+        "quality_title_budget": "10 kelimeyi aşan başlıklar",
+        "quality_tag_singleton": "Tekil etiket payı",
         "quality_vocabulary": "Etiketler ortak sözlükten",
         "quality_ungrounded": "Metinde olmayan rakam taşıyan haber",
         "quality_na": "yok",
-        "verdicts_labelled": "Karar verilen",
+        "quality_wrong_feedback": "Kategorilere ayrılmış yanlış geri bildirim",
+        "quality_eval_spend": "Bu bültendeki eval harcaması",
+        "verdicts_labelled": "Yanlış işaretlenen",
         # `/runs/verdicts`: the labels themselves, under the count. The summary
         # line states the two figures the count states and no third one - what
         # counts as "enough" labels is a constant in `evals/judge.py` and this
         # layer does not import it (ADR 0019 §2).
         "verdicts_heading": "Okurun kararları",
-        "verdicts_summary": "{n} / {total} habere karar verildi · {w} tanesine “yanlış” dendi",
-        "verdicts_empty": (
-            "Henüz bir habere karar verilmedi. Bir özetin altındaki Doğru · Yanlış "
-            "bu listeyi doldurur."
-        ),
+        "verdicts_summary": "{w} haber yanlış olarak işaretlendi",
+        "verdicts_empty": "Henüz bir haber yanlış olarak işaretlenmedi.",
         "col_story": "Haber",
         "col_verdict": "Karar",
         # The judge's findings on the same page, above the labels. The sentence
@@ -273,12 +276,14 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "step_enrich": "Zenginleştirme",
         "step_summarize": "Özetleme",
         "step_rank": "Sıralama",
+        "step_translate": "Çeviri",
         "step_persist": "Yazma",
         "flow_collect": "{a} görülen → {b} yeni",
         "flow_dedupe": "{a} aday → {b} kalan",
         "flow_enrich": "{a} makale → {b} gövdeli",
         "flow_summarize": "{a} aday → {b} özet",
         "flow_rank": "{a} özet → {b} seçilen",
+        "flow_translate": "{a} seçilen → {b} Türkçe çeviri",
         "flow_persist": "{a} özet → {b} satır",
         # A step's note. Recorded by the node as a key and its numbers
         # (`StepRecord.note_key`) so that the one column of the run detail page
@@ -387,12 +392,12 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "day_stories": "{d}: {n} stories",
         "brief_meta": "{n} stories · {s} sources · {g} topics",
         "why_label": "Why it matters",
+        "placement_label": "Placement reason",
         "impact_high": "High impact",
         "impact_mid": "Medium impact",
         "impact_low": "Low impact",
         # "Open source" alone is the licensing term; the label is an instruction.
         "open_source": "Go to source",
-        "verdict_ok": "Right",
         "verdict_wrong": "Wrong",
         "verdict_note": "What did it get wrong? (optional)",
         "verdict_save": "Save",
@@ -408,21 +413,25 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
             "the run button does nothing without one."
         ),
         "quality_heading": "What this bulletin measured",
+        "quality_agreement": "Production agreement",
         "quality_lead": "All of it free, computed by the press itself.",
-        "quality_key_fact": "Named the thing that made it news",
-        "quality_key_fact_kept": "And carried it into the summary",
-        "quality_numeral_recall": "Carried a figure from the article",
-        "quality_budget": "Summary kept the word budget",
+        "quality_key_fact": "Key fact named",
+        "quality_key_fact_kept": "Key fact retained in the writing",
+        "quality_numeral_recall": "Article numeral retained",
+        "quality_budget": "Summaries over 55 words",
+        "quality_why_budget": "Why-it-matters over 20 words",
+        "quality_title_budget": "Titles over 10 words",
+        "quality_tag_singleton": "Tag singleton share",
         "quality_vocabulary": "Tags from the shared vocabulary",
-        "quality_ungrounded": "Stories with a figure the text lacks",
-        "quality_na": "none",
-        "verdicts_labelled": "With a verdict",
+        "quality_ungrounded": "Ungrounded numerals",
+        "quality_na": "n/a",
+        "quality_wrong_feedback": "Categorized wrong feedback",
+        "quality_eval_spend": "Eval spend for this bulletin",
+        "verdicts_labelled": "Marked wrong",
         # See the note on the Turkish block.
         "verdicts_heading": "The reader's verdicts",
-        "verdicts_summary": "{n} of {total} stories have a verdict · {w} called wrong",
-        "verdicts_empty": (
-            "No story carries a verdict yet. The Right · Wrong under a summary fills this list."
-        ),
+        "verdicts_summary": "{w} stories marked wrong",
+        "verdicts_empty": "No story has been marked wrong yet.",
         "col_story": "Story",
         "col_verdict": "Verdict",
         "findings_heading": "Sentences the judge could not support",
@@ -488,12 +497,14 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "step_enrich": "Enrich",
         "step_summarize": "Summarize",
         "step_rank": "Rank",
+        "step_translate": "Translate",
         "step_persist": "Persist",
         "flow_collect": "{a} seen → {b} new",
         "flow_dedupe": "{a} candidates → {b} kept",
         "flow_enrich": "{a} articles → {b} with a body",
         "flow_summarize": "{a} candidates → {b} summaries",
         "flow_rank": "{a} summaries → {b} chosen",
+        "flow_translate": "{a} selected → {b} Turkish translations",
         "flow_persist": "{a} summaries → {b} rows",
         "note_collect": "{sources} source(s), {unchanged} unchanged",
         "note_dedupe": "{dropped} restatement(s) dropped",

@@ -10,9 +10,8 @@
 
    Placement was picked by drawing the alternatives (E2.1): the reader's own
    line, beside the other things the reader does, leaving the meta line to the
-   machine. It is drawn at rest and not under the pointer - the labels are what
-   the evaluation layer is calibrated against, and a control nobody sees is a
-   control nobody presses. #}
+   machine. It is drawn at rest and not under the pointer - the reader's
+   wrong-only label should be visible when they can make it. #}
 <div class="item__f" id="foot-{{ story.id }}">
   {% if story.tags %}
   {# Three, not all of them: the tag row is orientation, and a story
@@ -40,10 +39,9 @@
   {% if story.verdict == 'wrong' %}
   {# Which of the four the "wrong" was about. Four separate claims sit in one
      story block - the facts, that this is AI news, that it is not the story
-     above it again, and the size the editor gave it - and one word for all four
-     is a label the evaluation cannot use: only `wrong_fact` calibrates the
-     grounding judge (PLAN-V2 5.1). Asked after the click rather than instead of
-     it, so the first press is still one word. #}
+     above it again, and the size the editor gave it. The category tells the
+     next reader which claim the person marked wrong. Asked after the click so
+     the first press is still one word. #}
   <div class="vd-why">
     <span class="vd-why__q">{{ t.verdict_why }}</span>
     {% for value in reasons %}

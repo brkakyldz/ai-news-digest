@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ainews.config import Settings, get_settings
-from ainews.db import Bulletin, BulletinItem, Run
+from ainews.db import Bulletin, BulletinItem, Run, Summary, SummaryTranslation
 from ainews.db.models import utcnow
 from ainews.pipeline.pricing import estimate_cost
 from ainews.pipeline.state import PipelineState
@@ -55,7 +55,58 @@ async def publish_bulletin(
     if not items:
         return None
 
-    day, language = state["day"], state["language"]
+    day, language = state["day"], "en"
+    ids = [item["summary_id"] for item in items]
+    summaries = {
+        row.id: row
+        for row in (await session.execute(select(Summary).where(Summary.id.in_(ids)))).scalars()
+    }
+    translations = {
+        row.summary_id: row
+        for row in (
+            await session.execute(
+                select(SummaryTranslation).where(
+                    SummaryTranslation.summary_id.in_(ids), SummaryTranslation.language == "tr"
+                )
+            )
+        ).scalars()
+    }
+    reason_tr = state.get("reason_translations") or {}
+    expected_reason_ids = {
+        item["summary_id"] for item in items if (item.get("reason") or "").strip()
+    }
+    if set(reason_tr) != expected_reason_ids:
+        raise ValueError("Turkish item reasons do not exactly match the nonempty English reasons")
+    for item in items:
+        summary = summaries.get(item["summary_id"])
+        translation = translations.get(item["summary_id"])
+        if summary is None or summary.language != "en":
+            raise ValueError("cannot publish a non-English or missing canonical summary")
+        if not all(
+            (value or "").strip()
+            for value in (summary.title_local, summary.summary, summary.why_it_matters)
+        ):
+            raise ValueError(f"summary {summary.id} has blank canonical English prose")
+        if (
+            translation is None
+            or translation.canonical_hash != summary.content_hash
+            or not all(
+                (value or "").strip()
+                for value in (
+                    translation.title_local,
+                    translation.summary,
+                    translation.why_it_matters,
+                )
+            )
+        ):
+            raise ValueError(f"summary {summary.id} has no valid Turkish translation")
+        if (item.get("reason") or "").strip() and not (reason_tr.get(summary.id) or "").strip():
+            raise ValueError(f"summary {summary.id} has no Turkish reason translation")
+    editor_note = (state.get("editor_note") or "").strip()
+    if not editor_note:
+        raise ValueError("publication has no English editor note")
+    if not (state.get("editor_note_tr") or "").strip():
+        raise ValueError("publication has no Turkish editor note")
     version = (
         await session.execute(
             select(func.coalesce(func.max(Bulletin.version), 0) + 1)
@@ -68,7 +119,9 @@ async def publish_bulletin(
         day=day,
         language=language,
         version=version,
-        editor_note=state.get("editor_note") or None,
+        editor_note=editor_note,
+        editor_note_tr=state["editor_note_tr"].strip(),
+        bilingual=True,
         model_rank=state.get("model_rank"),
         agreement=state.get("agreement"),
         est_cost_usd=rank_cost,
@@ -83,7 +136,8 @@ async def publish_bulletin(
                 summary_id=item["summary_id"],
                 position=item["position"],
                 tier=item["tier"],
-                reason=item["reason"] or None,
+                reason=(item.get("reason") or "").strip() or None,
+                reason_tr=(reason_tr.get(item["summary_id"]) or "").strip() or None,
             )
         )
     await session.flush()
@@ -110,6 +164,7 @@ async def persist_run(
         raise RuntimeError(f"run {state['run_id']} disappeared mid-flight")
 
     payloads = state.get("summaries") or []
+    summary_failures = state.get("summary_failures") or []
     # A retried `Send` appends its payload a second time, because `summaries` is
     # a concatenating reducer. The rows themselves are safe - the summarise node
     # writes them under a unique key - but counting the tokens twice would put a
@@ -127,9 +182,15 @@ async def persist_run(
     # default. Reading `settings` here would let the two agree with each other
     # and both disagree with the run.
     rank_cost = estimate_cost(state.get("model_rank") or settings.openai_model, rank_in, rank_out)
-    summarize_in = sum(payload["tokens_in"] for payload in by_summary.values())
-    summarize_out = sum(payload["tokens_out"] for payload in by_summary.values())
-    summarize_cost = sum(payload["est_cost_usd"] for payload in by_summary.values())
+    summarize_in = sum(payload["tokens_in"] for payload in by_summary.values()) + sum(
+        failure["tokens_in"] for failure in summary_failures
+    )
+    summarize_out = sum(payload["tokens_out"] for payload in by_summary.values()) + sum(
+        failure["tokens_out"] for failure in summary_failures
+    )
+    summarize_cost = sum(payload["est_cost_usd"] for payload in by_summary.values()) + sum(
+        failure["est_cost_usd"] for failure in summary_failures
+    )
     errors = state.get("errors") or []
 
     bulletin = await publish_bulletin(session, state, rank_cost)
@@ -138,12 +199,19 @@ async def persist_run(
     run.n_collected = state.get("n_collected", 0)
     run.n_new = state.get("n_new", 0)
     run.n_summarized = len(by_summary)
-    run.tokens_in = summarize_in + rank_in
-    run.tokens_out = summarize_out + rank_out
+    translation_in = state.get("translation_tokens_in", 0)
+    translation_out = state.get("translation_tokens_out", 0)
+    run.tokens_in = summarize_in + rank_in + translation_in
+    run.tokens_out = summarize_out + rank_out + translation_out
     # The run's own spend, which is what it paid for: the summaries it bought
     # plus the ranking it bought. A bulletin's cost is the ranking alone, and a
     # summary carries its own - the same dollar is not on two rows.
-    run.est_cost_usd = summarize_cost + rank_cost
+    translation_cost = estimate_cost(
+        state.get("model_summarize") or settings.openai_model_summarize,
+        translation_in,
+        translation_out,
+    )
+    run.est_cost_usd = summarize_cost + rank_cost + translation_cost
     run.error = "\n".join(errors[:MAX_STORED_ERRORS]) or None
     # "partial" is a real outcome, not a failure: a feed 404ed or three articles
     # would not summarise, and the other ninety-seven are still a bulletin.

@@ -1,31 +1,10 @@
 """The sampled grounding judge: `ainews eval judge` (PLAN-EVALS E3.2-E3.4).
 
-One question, binary, about grounding only: is every factual claim in the
-summary and the why-it-matters line supported by the article text the
-summariser was shown? Nothing about style, length, importance or language -
-Turkish quality is judged by the reader, never by a model.
-
-Sampled, not exhaustive: twelve summaries a day on the judge's tier costs about
-$2 a month, where judging all ninety would cost six times the product. The
-sample is seeded so a re-run judges the same twelve, the cost is estimated from
-body length before the first call and the command refuses above `--max-cost`,
-and every judged summary becomes an `EvalResult` row - eval spend is on the
-record like product spend.
-
-The sample is drawn from the ranked stories first. The reader labels what the
-page shows, and the page shows the ranked fifteen; drawn uniformly over
-ninety-one summaries a sample holds one or two of those, so the judge and the
-reader look at different stories and the calibration pairs - a judgement *and* a
-label on the same summary - form only by accident.
-
-Calibration (`--labelled`) judges every summary that carries a reader's
-`Verdict` and reports TPR and TNR separately, never one accuracy figure: a
-judge that passes everything scores 90% accuracy on a mostly-right digest and
-catches nothing. It also reports precision - of the summaries the judge failed,
-the share the reader agreed were wrong - because for a tool with one reader the
-question the judge exists to answer is not "did it miss something" but "when it
-raises its hand, is it right", and `/runs/verdicts` puts the judge's failures in
-front of the reader for exactly that answer.
+The judge reads the article text and checks whether its factual claims are
+supported. It samples ranked stories first, estimates cost before calling the
+model, and records each result in `eval_results`. The optional labelled mode is
+a diagnostic count for stories the reader marked `wrong_fact`; it is not a
+calibrated quality rate.
 """
 
 from __future__ import annotations
@@ -52,8 +31,6 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SAMPLE = 12
 DEFAULT_MAX_COST = 0.10
-# Enough labels per class before the calibration numbers mean anything.
-MIN_LABELS_PER_CLASS = 30
 # Rough token estimate for the cost guard: four characters a token, and a
 # short structured answer back.
 CHARS_PER_TOKEN = 4
@@ -201,7 +178,11 @@ async def load_candidates(session: AsyncSession, bulletin_id: int) -> list[Candi
 
 
 async def load_labelled(session: AsyncSession) -> list[Candidate]:
-    """Every summary, in any run, that carries a reader's verdict."""
+    """Summaries marked wrong by the reader and carrying a body.
+
+    Keep every category here so the report can count non-factual feedback
+    without asking the model to judge it.
+    """
     rows = (
         await session.execute(
             select(Summary, Article, Source, Verdict)
@@ -209,6 +190,7 @@ async def load_labelled(session: AsyncSession) -> list[Candidate]:
             .join(Source, Source.id == Article.source_id)
             .join(Verdict, Verdict.summary_id == Summary.id)
             .where(Article.body_text.isnot(None))
+            .where(Verdict.verdict == "wrong")
             .order_by(Summary.id)
         )
     ).all()
@@ -359,124 +341,49 @@ async def judge_bulletin(
     return JudgeReport(bulletin_id, model, outcomes, cost)
 
 
-# -- calibration --------------------------------------------------------------
+# -- diagnostic feedback counts ----------------------------------------------
 
 
 @dataclass(slots=True)
 class Calibration:
-    """Judge against reader, with the positive class being *wrong*.
+    """Diagnostic count of wrong-fact labels the judge caught or missed."""
 
-    TPR: of the summaries the reader called wrong, the share the judge failed.
-    TNR: of the summaries the reader called ok, the share the judge passed.
-    Reported separately, with the count behind each, and never folded into one
-    accuracy figure.
-    """
-
-    wrong_caught: int = 0  # reader wrong, judge failed
-    wrong_missed: int = 0  # reader wrong, judge passed
-    ok_passed: int = 0  # reader ok, judge passed
-    ok_failed: int = 0  # reader ok, judge failed
+    wrong_caught: int = 0
+    wrong_missed: int = 0
     unparsed: int = 0
-    # Labels the grounding judge is not the right instrument for: a "wrong" the
-    # reader gave for `not_news`, `duplicate` or `wrong_place`, and a "wrong"
-    # from before the reader was asked which. Counted rather than discarded so
-    # the report can say how many labels exist that this rate does not use.
     other_reason: int = 0
 
     @property
     def n_wrong(self) -> int:
         return self.wrong_caught + self.wrong_missed
 
-    @property
-    def n_ok(self) -> int:
-        return self.ok_passed + self.ok_failed
-
-    @property
-    def tpr(self) -> float | None:
-        return self.wrong_caught / self.n_wrong if self.n_wrong else None
-
-    @property
-    def tnr(self) -> float | None:
-        return self.ok_passed / self.n_ok if self.n_ok else None
-
-    @property
-    def n_failed(self) -> int:
-        """How many labelled summaries the judge raised its hand on."""
-        return self.wrong_caught + self.ok_failed
-
-    @property
-    def precision(self) -> float | None:
-        """Of the summaries the judge failed, the share the reader called wrong.
-
-        The number a single reader actually acts on. TPR needs the reader to
-        find what the judge missed, which takes hundreds of labels on a mostly
-        right digest; precision needs one label per judge failure, and
-        `/runs/verdicts` asks for exactly that one.
-        """
-        return self.wrong_caught / self.n_failed if self.n_failed else None
-
-    @property
-    def trusted(self) -> bool:
-        return min(self.n_wrong, self.n_ok) >= MIN_LABELS_PER_CLASS
-
 
 def calibrate(labels: list[tuple[str, str | None, bool | None]]) -> Calibration:
-    """`(human_verdict, reason, judge_passed)` triples in, the 2x2 out.
-
-    Only `wrong_fact` counts against the judge. The three other reasons are
-    about parts of the system this judge never looks at - whether the item is AI
-    news, whether it is the story above it again, and where the editor put it -
-    and reading them as grounding failures is what made a reader who spotted an
-    irrelevant story count against a judge that was right about the text. They
-    are not "ok" either: a story the reader rejected is not evidence that the
-    summary is faithful, so they leave the table entirely.
-
-    A `wrong` with no reason is one of those too. Nobody asked which of the four
-    the reader meant, and guessing on their behalf is how a rate becomes fiction.
-    """
+    """Count judge outcomes for reader feedback specifically tagged wrong_fact."""
     table = Calibration()
     for human, reason, judged in labels:
-        if human == "wrong" and reason != "wrong_fact":
+        if human != "wrong":
+            continue
+        if reason != "wrong_fact":
             table.other_reason += 1
         elif judged is None:
             table.unparsed += 1
-        elif human == "wrong":
-            if judged:
-                table.wrong_missed += 1
-            else:
-                table.wrong_caught += 1
         elif judged:
-            table.ok_passed += 1
+            table.wrong_missed += 1
         else:
-            table.ok_failed += 1
+            table.wrong_caught += 1
     return table
 
 
 def format_calibration(table: Calibration) -> str:
-    def pct(value: float | None) -> str:
-        return "n/a" if value is None else f"{value:.0%}"
-
     lines = [
-        "                judge FAIL   judge PASS",
-        f"reader wrong    {table.wrong_caught:>10}   {table.wrong_missed:>10}",
-        f"reader ok       {table.ok_failed:>10}   {table.ok_passed:>10}",
-        "",
-        f"TPR (wrong caught)  {pct(table.tpr)}  on {table.n_wrong} labelled wrong",
-        f"TNR (ok passed)     {pct(table.tnr)}  on {table.n_ok} labelled ok",
-        f"precision           {pct(table.precision)}  on {table.n_failed} judge failures",
+        f"wrong_fact labels: {table.n_wrong} (diagnostic, not a quality rate)",
+        f"judge caught {table.wrong_caught}; missed {table.wrong_missed}",
     ]
     if table.unparsed:
         lines.append(f"{table.unparsed} judged but unparsable, not counted")
     if table.other_reason:
-        lines.append(
-            f"{table.other_reason} label(s) set aside: a 'wrong' this judge does not "
-            "measure (not AI news, a duplicate, or in the wrong place)"
-        )
-    if not table.trusted:
-        lines.append(
-            f"not enough labels to trust: {MIN_LABELS_PER_CLASS} per class needed, "
-            f"have {table.n_wrong} wrong / {table.n_ok} ok"
-        )
+        lines.append(f"{table.other_reason} wrong labels use another category and were not counted")
     return "\n".join(lines)
 
 
@@ -489,10 +396,13 @@ async def judge_labelled(
 ) -> tuple[Calibration, list[Outcome]]:
     settings = settings or get_settings()
     labelled = await load_labelled(session)
+    factual = [candidate for candidate in labelled if candidate.human_reason == "wrong_fact"]
     outcomes = await judge_candidates(
-        session, labelled, max_cost=max_cost, settings=settings, model=model
+        session, factual, max_cost=max_cost, settings=settings, model=model
     )
+    judged = {outcome.candidate.summary_id: outcome.passed for outcome in outcomes}
     labels = [
-        (o.candidate.human_verdict or "ok", o.candidate.human_reason, o.passed) for o in outcomes
+        (candidate.human_verdict, candidate.human_reason, judged.get(candidate.summary_id))
+        for candidate in labelled
     ]
     return calibrate(labels), outcomes

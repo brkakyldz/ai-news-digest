@@ -1241,7 +1241,7 @@ kbd {
    evaluation layer runs on these labels, a control nobody sees is a control
    nobody presses, and after three days the archive held five of them over 138
    summaries. A reader who does not want to judge skips a word in `--ink-3`;
-   an evaluation with no labels has nothing to be calibrated against. The
+   reader-reported errors need a visible way to report them. The
    hover step also never fired on a touch screen, so half the readers were
    already being shown what the other half were not. */
 .vd {
@@ -1319,8 +1319,8 @@ kbd {
    vertical step is the low story's own.
 
    The foot line comes back with it (2026-09-08). Hiding it took away the
-   topics, the link to the source and the reader's own `doğru · yanlış` - and
-   that last one is not decoration: E3's calibration is fed by labels, a label
+   topics, the link to the source and the reader's error report - and
+   that last one is not decoration: error feedback is fed by labels, a label
    exists because a person pressed a word, and a third of the feed was drawn
    with nothing to press. What stays hidden is the prose, which is what the
    rule was actually arguing about. */

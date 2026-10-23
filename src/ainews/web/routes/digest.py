@@ -21,6 +21,7 @@ from ainews.web.i18n import strings
 from ainews.web.views import (
     get_templates,
     language_of,
+    project_editor_note,
     remember_preferences,
     shell_context,
 )
@@ -41,10 +42,12 @@ async def index(
     bulletin = await queries.latest_bulletin(session)
 
     context = await shell_context(request, session, language, page="digest", bulletin=bulletin)
+    editor_note, editor_note_language = project_editor_note(bulletin, language)
     context.update(
         {
             "bulletin": bulletin,
-            "editor_note": bulletin.editor_note if bulletin else None,
+            "editor_note": editor_note,
+            "editor_note_language": editor_note_language,
             "stories": [],
             "others": [],
             "n_others": 0,
@@ -78,7 +81,7 @@ async def index(
         # One pass over the day's rows, both scopes counted. The filter row
         # follows the list on screen, so it draws twelve of whichever scope is
         # showing and the disclosure the rest.
-        topics = await queries.tag_counts(session, bulletin)
+        topics = await queries.tag_counts(session, bulletin, include_all=all)
         context["tags"] = topics.shown(not all)[:12]
         # The brief's footnote does not follow it. That line is the size of the
         # *bulletin* - the same eleven stories the rail badge counts - so opening
@@ -126,6 +129,7 @@ async def archive(
             selected = (await queries.bulletin_by_id(session, b) if b else None) or listed.rows[0]
 
     context = await shell_context(request, session, language, page="archive", bulletin=selected)
+    editor_note, editor_note_language = project_editor_note(selected, language)
     context.update(
         {
             "bulletins": listed,
@@ -133,6 +137,8 @@ async def archive(
             + (f"&b={selected.id}" if selected else "")
             + "&limit=",
             "selected": selected,
+            "editor_note": editor_note,
+            "editor_note_language": editor_note_language,
             # The version that replaced this one, so a reader who followed a link
             # to a superseded page is told rather than left to work it out.
             "superseded_by": (await queries.newer_version(session, selected) if selected else None),
@@ -204,8 +210,8 @@ async def post_verdict(
     would be a story card inside a table.
     """
     language = language_of(request)
-    if verdict not in ("ok", "wrong"):
-        raise HTTPException(status_code=422, detail="verdict is 'ok' or 'wrong'")
+    if verdict != "wrong":
+        raise HTTPException(status_code=422, detail="verdict is 'wrong'")
     if reason is not None and reason not in VERDICT_REASONS:
         raise HTTPException(status_code=422, detail=f"reason is one of {VERDICT_REASONS}")
     if await session.get(Summary, summary_id) is None:

@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     # CLI's `--model` flags - and these say what a press or a command that names
     # nothing falls back to. `pipeline.pricing.PRICES` is the menu they are
     # chosen from and the table they are costed at.
-    openai_model: str = "gpt-5.6-luna"
-    # Its own knob: if Turkish quality disappoints, only this node moves up to
-    # terra and ranking stays on luna (ADR 0001).
-    openai_model_summarize: str = "gpt-5.6-luna"
+    openai_model: str = "gpt-6-luna"
+    # Its own knob: if Turkish quality disappoints, only this node moves up a
+    # tier while ranking stays on the default (ADR 0001).
+    openai_model_summarize: str = "gpt-6-luna"
     # The grounding judge (`ainews eval judge`), one tier up from the model it
     # checks: a judge no stronger than the summariser mostly agrees with it.
     # Never used by the pipeline; sampled, so ~$2/month at one judged run a day.

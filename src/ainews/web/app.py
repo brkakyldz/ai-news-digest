@@ -16,6 +16,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 
 from ainews import __version__
 from ainews.config import Settings, get_settings
@@ -37,6 +39,33 @@ log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEB_DIR / "static"
 TEMPLATE_DIR = WEB_DIR / "templates"
+
+
+class RevalidatedStatic(StaticFiles):
+    """Static files a browser has to ask about before reusing its copy.
+
+    `StaticFiles` sends an ETag and a `Last-Modified` and no `Cache-Control`,
+    and a response with no freshness directive is one the browser may invent a
+    lifetime for: the common heuristic is a tenth of the file's age, so a
+    stylesheet that has sat unchanged for five days is reused for twelve hours
+    without a request. `theme.css` keeps one URL for the life of the project, so
+    that window draws today's markup with whatever stylesheet the reader last
+    picked up - no rail, no grid, and nothing in the console to say why.
+
+    `no-cache` is not "do not store": it keeps the copy and requires the
+    conditional request, which the ETag already answers with a 304 and no body.
+    """
+
+    def file_response(
+        self,
+        full_path: str,
+        stat_result: object,
+        scope: Scope,
+        status_code: int = 200,
+    ) -> Response:
+        response = super().file_response(full_path, stat_result, scope, status_code)  # type: ignore[arg-type]
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @asynccontextmanager
@@ -118,7 +147,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", RevalidatedStatic(directory=STATIC_DIR), name="static")
     register_routes(app)
     return app
 

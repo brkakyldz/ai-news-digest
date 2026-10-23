@@ -20,7 +20,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, inspect
+from sqlalchemy import Connection, create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 log = logging.getLogger(__name__)
@@ -83,12 +83,70 @@ def _has_tables(connection: Connection) -> bool:
     return "runs" in inspect(connection).get_table_names()
 
 
+def _baseline_schema() -> dict[str, frozenset[str]]:
+    """The tables and columns `0001_baseline` actually produces.
+
+    Read from the revision by running it into an empty in-memory database
+    rather than written out here. A list restated in this module would drift
+    from the revision the moment either is edited, which is the whole failure
+    this function exists to catch. The in-memory database is not the caller's,
+    so the module's one-connection rule is untouched: there is no file to lock.
+    """
+    scratch = create_engine("sqlite://")
+    try:
+        with scratch.begin() as connection:
+            command.upgrade(alembic_config(connection), BASELINE)
+            inspector = inspect(connection)
+            return {
+                name: frozenset(column["name"] for column in inspector.get_columns(name))
+                for name in inspector.get_table_names()
+                if is_ours(name, "table") and name != "alembic_version"
+            }
+    finally:
+        scratch.dispose()
+
+
+def _short_of_baseline(connection: Connection) -> list[str]:
+    """What an unstamped database still lacks before the stamp would be true.
+
+    Stamping asserts that the file already has the baseline's schema. Asserting
+    it without looking is how a database that predates the baseline's own
+    assumptions gets marked as being at it, and then dies several revisions
+    later inside a query about a column nobody mentioned - `0004` reads
+    `runs.model_rank`, which an archive from before ADR 0005's amendments has
+    never had. Named here, the mismatch is one sentence at the point it is made.
+    """
+    inspector = inspect(connection)
+    present = set(inspector.get_table_names())
+    missing: list[str] = []
+    for table, columns in sorted(_baseline_schema().items()):
+        if table not in present:
+            missing.append(table)
+            continue
+        missing.extend(
+            f"{table}.{column}"
+            for column in sorted(columns - {c["name"] for c in inspector.get_columns(table)})
+        )
+    return missing
+
+
 def _bring_to_head(connection: Connection) -> None:
     config = alembic_config(connection)
     if _current(connection) is None and _has_tables(connection):
         # An archive built by `create_all` and amended by hand. Applying the
         # baseline would try to create tables that exist; the truthful move is
-        # to record where it already is and carry on from there.
+        # to record where it already is and carry on from there - once the
+        # claim has been checked.
+        short = _short_of_baseline(connection)
+        if short:
+            raise RuntimeError(
+                f"this database has our tables but not the schema {BASELINE} describes, "
+                f"so stamping it there would be false: {', '.join(short)} missing. "
+                "It predates the hand amendments the baseline assumes - see that "
+                "revision's docstring - and no revision can add them, because every "
+                "one of them runs after the stamp. Start from an empty database, or "
+                "restore one that was opened by a version of the app that had them."
+            )
         log.info("existing database has no version stamp; stamping at %s", BASELINE)
         command.stamp(config, BASELINE)
     command.upgrade(config, "head")

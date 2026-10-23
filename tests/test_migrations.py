@@ -73,6 +73,45 @@ async def test_init_db_leaves_the_database_at_head(engine: AsyncEngine) -> None:
     assert await current_revision(engine) == head_revision()
 
 
+async def test_bilingual_schema_migration_preserves_legacy_publications(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(
+                lambda sync_connection: command.upgrade(
+                    alembic_config(sync_connection), "0008_published_checks"
+                )
+            )
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO bulletins (id, day, language, version, editor_note, "
+                    "model_rank, agreement, est_cost_usd, run_id, created_at) "
+                    "VALUES (1, '2026-09-08', 'tr', 1, 'old note', NULL, NULL, 0, NULL, "
+                    "'2026-09-08 10:00:00')"
+                )
+            )
+
+        await init_db(engine)
+
+        async with engine.connect() as connection:
+            legacy = (
+                await connection.execute(
+                    text("SELECT editor_note, editor_note_tr, bilingual FROM bulletins WHERE id=1")
+                )
+            ).one()
+            columns = {
+                row[1]
+                for row in (
+                    await connection.execute(text("PRAGMA table_info(bulletin_items)"))
+                ).all()
+            }
+            assert {"reason", "reason_tr"} <= columns
+        assert tuple(legacy) == ("old note", None, 0)
+    finally:
+        await engine.dispose()
+
+
 async def test_init_db_is_idempotent(engine: AsyncEngine) -> None:
     """It runs on every start, and every entry point calls it."""
     await init_db(engine)
@@ -495,5 +534,48 @@ async def test_two_summaries_of_one_article_stop_the_upgrade_by_name(tmp_path: P
                     text("SELECT count(*) FROM sqlite_master WHERE name = 'bulletins'")
                 )
             ).scalar_one() == 0
+    finally:
+        await engine.dispose()
+
+
+async def test_an_archive_from_before_the_baselines_amendments_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The stamp is a claim about the file, so it is checked before it is made.
+
+    A database that stopped being opened before ADR 0005's hand amendments still
+    has `runs` - the witness `_has_tables` goes by - and has none of the two
+    model columns, `summaries.editor_importance`, or the three tables that
+    arrived with ADRs 0019 and 0022. Stamped anyway it reaches `0004` and dies
+    on `no such column: r.model_rank`, three revisions away from the mistake and
+    with nothing in the traceback pointing back at it.
+    """
+    engine = await _archive_as_it_was(tmp_path / "archive.db")
+    try:
+        async with engine.begin() as connection:
+            for statement in (
+                "DROP TABLE run_steps",
+                "DROP TABLE verdicts",
+                "DROP TABLE eval_results",
+                "ALTER TABLE runs DROP COLUMN model_rank",
+                "ALTER TABLE runs DROP COLUMN model_summarize",
+                "ALTER TABLE summaries DROP COLUMN editor_importance",
+            ):
+                await connection.execute(text(statement))
+
+        with pytest.raises(RuntimeError) as refused:
+            await init_db(engine)
+
+        # Every missing piece is named, because "it is not the baseline" leaves
+        # the operator with the same inspection to do by hand.
+        message = str(refused.value)
+        for absent in (
+            "run_steps",
+            "runs.model_rank",
+            "runs.model_summarize",
+            "summaries.editor_importance",
+        ):
+            assert absent in message
+        assert await current_revision(engine) is None
     finally:
         await engine.dispose()

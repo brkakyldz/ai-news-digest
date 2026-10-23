@@ -31,15 +31,10 @@ from ainews.pipeline.nodes.summarize import MAX_BODY_CHARS
 from ainews.quality.checks import (
     Story,
     content_floor,
-    editor_note_shape,
-    importance_distribution,
     numeral_values,
     ranked_order,
-    ranker_vs_fallback,
     tag_vocabulary,
-    tier_shape,
     ungrounded_numerals,
-    unrepresented_fives,
     word_budget,
 )
 
@@ -58,10 +53,9 @@ def capitalised_tokens(body: str | None) -> list[str]:
 async def day_stories(session: AsyncSession, bulletin: Bulletin) -> list[Story]:
     """The bulletin's own items, and everything else its day summarised.
 
-    Both, because half of what the checks measure - the tag vocabulary, the
-    importance distribution, the free ordering - is about the summariser rather
-    than about the editor, and measuring only the stories the editor kept would
-    flatter it.
+    Both, because the content floor, word budgets and tag vocabulary describe the
+    summariser rather than only the editor, and measuring only published stories
+    would miss the candidates it left out.
 
     The published ones come first, in the editor's order; the rest follow by the
     summariser's own score. That is the order a reader meets them in, and the
@@ -107,8 +101,7 @@ async def day_stories(session: AsyncSession, bulletin: Bulletin) -> list[Story]:
                 "summary": summary.summary,
                 "why_it_matters": summary.why_it_matters,
                 "tags": tags,
-                # The summariser's own score, given with one article in view.
-                # The checks read it for the free ordering and the distribution.
+                # Retained in story fixtures for explicit prompt comparison.
                 "importance": summary.importance,
                 # The one concrete thing the summariser said made this news.
                 # `content_floor` asks whether it survived into the prose.
@@ -151,9 +144,4 @@ def published_checks(stories: list[Story], editor_note: str | None) -> dict[str,
             {"article_id": aid, "numerals": nums} for aid, nums in ungrounded_numerals(stories)
         ],
         "tags": tag_vocabulary(stories),
-        "importance": importance_distribution(stories),
-        "overlap": ranker_vs_fallback(stories),
-        "tiers": tier_shape(stories),
-        "unrepresented": unrepresented_fives(stories),
-        "editor_note": editor_note_shape(editor_note),
     }

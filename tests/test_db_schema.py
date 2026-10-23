@@ -16,6 +16,21 @@ async def test_init_db_is_idempotent(engine: AsyncEngine) -> None:
         rows = (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).all()
     names = {r[0] for r in rows}
     assert {"sources", "articles", "runs", "summaries", "daily_counters"} <= names
+    assert "summary_translations" in names
+
+
+def test_summary_content_hash_is_canonical_and_utf8() -> None:
+    summary = Summary(
+        title_local="Başlık",
+        summary="İçerik",
+        why_it_matters="Önemi",
+    )
+
+    assert (
+        summary.content_hash
+        == Summary(title_local="Başlık", summary="İçerik", why_it_matters="Önemi").content_hash
+    )
+    assert len(summary.content_hash) == 64
 
 
 async def test_wal_and_foreign_keys_are_on(engine: AsyncEngine) -> None:

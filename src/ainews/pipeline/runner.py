@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ainews.clock import local_day
 from ainews.config import Language, Settings, get_settings
-from ainews.db import Bulletin, Run
+from ainews.db import Bulletin, Run, RunStep
 from ainews.db.models import utcnow
 from ainews.db.session import session_scope
 from ainews.pipeline.graph import build_graph
@@ -170,9 +170,28 @@ async def _fail_run(run_id: str, error: str) -> None:
         run = await session.get(Run, run_id)
         if run is None:
             return
+        _aggregate_paid_steps(run, await _paid_steps(session, run_id))
         run.status = "error"
         run.finished_at = utcnow()
         run.error = error[:2000]
+
+
+async def _paid_steps(session: AsyncSession, run_id: str) -> list[RunStep]:
+    return list(
+        (
+            await session.execute(
+                select(RunStep).where(RunStep.run_id == run_id, RunStep.model != "")
+            )
+        ).scalars()
+    )
+
+
+def _aggregate_paid_steps(run: Run, rows: list[RunStep]) -> None:
+    """Keep paid work visible when a digest fails before persist can total it."""
+    run.tokens_in = sum(row.tokens_in for row in rows)
+    run.tokens_out = sum(row.tokens_out for row in rows)
+    run.est_cost_usd = sum(row.est_cost_usd for row in rows)
+    run.n_summarized = sum(row.n_out or 0 for row in rows if row.node == "summarize")
 
 
 async def reconcile_orphaned_runs() -> int:
@@ -194,6 +213,7 @@ async def reconcile_orphaned_runs() -> int:
     async with session_scope() as session:
         rows = list((await session.execute(select(Run).where(Run.status == "running"))).scalars())
         for run in rows:
+            _aggregate_paid_steps(run, await _paid_steps(session, run.id))
             run.status = "error"
             run.error = "process ended before the run did"
             run.finished_at = utcnow()
@@ -278,7 +298,9 @@ async def _start_digest(
     model_summarize: str | None,
     model_rank: str | None,
 ) -> str:
-    language = language or settings.digest_language
+    # `language` remains accepted for older callers, but new work always stores
+    # one canonical English bulletin with Turkish prose beside it.
+    language = "en"
     model_summarize = resolve_model(model_summarize, settings.openai_model_summarize)
     model_rank = resolve_model(model_rank, settings.openai_model)
     # The models are on the row from the start, not inferred from `run_steps`

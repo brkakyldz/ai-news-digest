@@ -12,6 +12,7 @@ a job quietly coming back is exactly the regression the decision forbids.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -28,6 +29,22 @@ def test_the_poll_is_the_only_job(settings: Settings) -> None:
     """Nothing on a clock may spend money (ADR 0015)."""
     scheduler = build_scheduler(settings)
     assert {job.id for job in scheduler.get_jobs()} == {COLLECT_JOB_ID}
+
+
+def test_an_invalid_timezone_falls_back_to_utc(settings: Settings) -> None:
+    settings.timezone = "Europe/Istambul"
+
+    scheduler = build_scheduler(settings)
+
+    assert scheduler.timezone == ZoneInfo("UTC")
+
+
+def test_scheduler_uses_the_passed_timezone(settings: Settings) -> None:
+    settings.timezone = "UTC"
+
+    scheduler = build_scheduler(settings)
+
+    assert scheduler.timezone == ZoneInfo("UTC")
 
 
 def test_collect_fires_on_the_configured_interval(monkeypatch: pytest.MonkeyPatch) -> None:

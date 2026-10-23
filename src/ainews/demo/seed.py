@@ -38,13 +38,14 @@ from ainews.db import (
     RunStep,
     Source,
     Summary,
+    SummaryTranslation,
     Verdict,
 )
 
 log = logging.getLogger(__name__)
 
 DEMO_PATH = Path(__file__).resolve().parent / "demo.json"
-SCHEMA = 1
+SCHEMA = 2
 DEFAULT_BULLETINS = 3
 
 
@@ -65,6 +66,7 @@ class DemoData:
     sources: list[dict[str, Any]] = field(default_factory=list)
     articles: list[dict[str, Any]] = field(default_factory=list)
     summaries: list[dict[str, Any]] = field(default_factory=list)
+    summary_translations: list[dict[str, Any]] = field(default_factory=list)
     runs: list[dict[str, Any]] = field(default_factory=list)
     run_steps: list[dict[str, Any]] = field(default_factory=list)
     bulletins: list[dict[str, Any]] = field(default_factory=list)
@@ -129,6 +131,20 @@ async def export_demo(session: AsyncSession, *, bulletins: int = DEFAULT_BULLETI
         ).scalars()
     )
     summaries = [s for s in summaries if s.id in published_ids or local_day(s.created_at) in days]
+    summary_ids = {s.id for s in summaries}
+    translations = (
+        list(
+            (
+                await session.execute(
+                    select(SummaryTranslation)
+                    .where(SummaryTranslation.summary_id.in_(summary_ids))
+                    .order_by(SummaryTranslation.id)
+                )
+            ).scalars()
+        )
+        if summary_ids
+        else []
+    )
 
     article_ids = {s.article_id for s in summaries}
     articles = list(
@@ -168,7 +184,6 @@ async def export_demo(session: AsyncSession, *, bulletins: int = DEFAULT_BULLETI
             )
         ).scalars()
     )
-    summary_ids = {s.id for s in summaries}
     verdicts = [
         v
         for v in (await session.execute(select(Verdict).order_by(Verdict.id))).scalars()
@@ -232,6 +247,22 @@ async def export_demo(session: AsyncSession, *, bulletins: int = DEFAULT_BULLETI
         }
         for s in summaries
     ]
+    data.summary_translations = [
+        {
+            "summary_id": row.summary_id,
+            "language": row.language,
+            "title_local": row.title_local,
+            "summary": row.summary,
+            "why_it_matters": row.why_it_matters,
+            "canonical_hash": row.canonical_hash,
+            "model": row.model,
+            "tokens_in": row.tokens_in,
+            "tokens_out": row.tokens_out,
+            "est_cost_usd": row.est_cost_usd,
+            "created_at": _offset(row.created_at, anchor),
+        }
+        for row in translations
+    ]
     data.runs = [
         {
             "id": r.id,
@@ -280,6 +311,8 @@ async def export_demo(session: AsyncSession, *, bulletins: int = DEFAULT_BULLETI
             "language": b.language,
             "version": b.version,
             "editor_note": b.editor_note,
+            "editor_note_tr": b.editor_note_tr,
+            "bilingual": b.bilingual,
             "model_rank": b.model_rank,
             "agreement": b.agreement,
             "est_cost_usd": b.est_cost_usd,
@@ -296,6 +329,7 @@ async def export_demo(session: AsyncSession, *, bulletins: int = DEFAULT_BULLETI
             "position": i.position,
             "tier": i.tier,
             "reason": i.reason,
+            "reason_tr": i.reason_tr,
         }
         for i in items
     ]
@@ -337,6 +371,7 @@ def write_demo(data: DemoData, path: Path | None = None) -> Path:
         "sources": data.sources,
         "articles": data.articles,
         "summaries": data.summaries,
+        "summary_translations": data.summary_translations,
         "runs": data.runs,
         "run_steps": data.run_steps,
         "bulletins": data.bulletins,
@@ -357,10 +392,12 @@ def load_demo(path: Path | None = None) -> DemoData:
     if not path.exists():
         raise LookupError(f"no demo data at {path}; run `ainews demo export` first")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema") != SCHEMA:
+    if payload.get("schema") not in (1, SCHEMA):
         raise ValueError(
-            f"demo data at {path} is schema {payload.get('schema')}, expected {SCHEMA}"
+            f"demo data at {path} is schema {payload.get('schema')}, expected 1 or {SCHEMA}"
         )
+    payload.setdefault("summary_translations", [])
+    payload["schema"] = SCHEMA
     return DemoData(**payload)
 
 
@@ -455,6 +492,23 @@ async def seed_demo(
         await session.flush()
         summary_ids[row["id"]] = summary.id
 
+    for row in data.summary_translations:
+        session.add(
+            SummaryTranslation(
+                summary_id=summary_ids[row["summary_id"]],
+                language=row["language"],
+                title_local=row["title_local"],
+                summary=row["summary"],
+                why_it_matters=row["why_it_matters"],
+                canonical_hash=row["canonical_hash"],
+                model=row["model"],
+                tokens_in=row["tokens_in"],
+                tokens_out=row["tokens_out"],
+                est_cost_usd=row["est_cost_usd"],
+                created_at=_moment(row.get("created_at"), anchor) or anchor,
+            )
+        )
+
     run_ids: dict[str, str] = {}
     for row in data.runs:
         run = Run(
@@ -503,6 +557,8 @@ async def seed_demo(
             language=row["language"],
             version=row["version"],
             editor_note=row["editor_note"],
+            editor_note_tr=row.get("editor_note_tr"),
+            bilingual=row.get("bilingual", False),
             model_rank=row["model_rank"],
             agreement=row["agreement"],
             est_cost_usd=row["est_cost_usd"],
@@ -522,6 +578,7 @@ async def seed_demo(
                 position=row["position"],
                 tier=row["tier"],
                 reason=row["reason"],
+                reason_tr=row.get("reason_tr"),
             )
         )
 

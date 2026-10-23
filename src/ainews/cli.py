@@ -225,7 +225,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("collect", help="poll every enabled feed once (no LLM, no cost)")
 
     digest = sub.add_parser("digest", help="run the full pipeline and write a digest")
-    digest.add_argument("--language", choices=("tr", "en"), default=None)
+    digest.add_argument(
+        "--language",
+        choices=("tr", "en"),
+        default=None,
+        help="accepted for compatibility; new digests always publish English and Turkish",
+    )
     # The same two choices the confirmation on /runs offers (ADR 0020), so a
     # terminal run and a press can be made identical - which is what makes the
     # dashboard reproducible from a shell rather than merely similar.

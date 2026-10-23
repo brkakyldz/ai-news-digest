@@ -128,7 +128,7 @@ async def test_two_simultaneous_presses_start_one_run(
     bodies = {first.body.decode(), second.body.decode()}
 
     await asyncio.sleep(0.4)
-    assert started == ["tr"], "a second press must not become a second paid run"
+    assert started == ["en"], "a second press must not become a second paid run"
     assert any("hx-get" in b for b in bodies), "one press must start the run"
     assert any("hx-get" not in b for b in bodies), "the other must be refused as busy"
     assert not runs_route.is_running(), "the slot must be released when the run ends"

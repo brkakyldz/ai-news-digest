@@ -27,18 +27,13 @@
   {%- if last_cost %}
   <p class="act__c">{{ t.confirm_cost.format(c=last_cost|money) }}</p>
   {%- endif %}
+  <p class="act__c">{{ t['lang_en'] }} + {{ t['lang_tr'] }}</p>
 
 
-  {# The three choices the press carries, in one grid so their labels share a
+  {# The two model choices the press carries, in one grid so their labels share a
      column and their controls start on one edge. They were three separate rows
      first and the ragged left edge of the tracks read as three unrelated
      controls rather than one question with three parts.
-
-     The language is the only place in the app where a language decision costs
-     money. It is deliberately not the bar's TR/EN switch: that one says what
-     the buttons are written in, this one says what the model will write
-     (ADR 0017). It starts on the page's language, because that is what a reader
-     pressing here almost always wants.
 
      The two model rows are the same kind of question and the one carrying a
      ten- to fifty-fold price (ADR 0020). Two rows and not one: the summariser
@@ -47,27 +42,16 @@
      could move apart. Slots run cheapest-first, so the default sits on the left
      and an expensive tier is a reach to the right rather than a neighbour.
 
-     Every slot is an `hx-get` of this same fragment with one parameter changed
-     and the other two carried through, so choosing costs no JavaScript and no
-     client state - and picking a model cannot silently reset the language the
-     reader had just picked. #}
+     Every slot is an `hx-get` of this same fragment with one model parameter
+     changed and the other carried through, so choosing costs no JavaScript or
+     client state. #}
   <div class="act__ch">
-    <span class="act__lb">{{ t.out_language }}</span>
-    <div class="seg seg--out" role="group" aria-label="{{ t.out_language }}">
-      {%- for code in ('tr', 'en') %}
-      <button type="button" lang="{{ code }}"
-              {% if out == code %}aria-current="true"{% endif %}
-              hx-get="/runs/confirm?lang={{ language }}&amp;out={{ code }}&amp;ms={{ ms }}&amp;mr={{ mr }}"
-              hx-target="#run-action" hx-swap="outerHTML">{{ t['lang_' ~ code] }}</button>
-      {%- endfor %}
-    </div>
-
     <span class="act__lb">{{ t.model_summarize }}</span>
     <div class="seg seg--model" role="group" aria-label="{{ t.model_summarize }}">
       {%- for m in models %}
       <button type="button" title="{{ m.id }}"
               {% if ms == m.id %}aria-current="true"{% endif %}
-              hx-get="/runs/confirm?lang={{ language }}&amp;out={{ out }}&amp;ms={{ m.id }}&amp;mr={{ mr }}"
+              hx-get="/runs/confirm?lang={{ language }}&amp;ms={{ m.id }}&amp;mr={{ mr }}"
               hx-target="#run-action" hx-swap="outerHTML">{{ m.short }}</button>
       {%- endfor %}
     </div>
@@ -77,7 +61,7 @@
       {%- for m in models %}
       <button type="button" title="{{ m.id }}"
               {% if mr == m.id %}aria-current="true"{% endif %}
-              hx-get="/runs/confirm?lang={{ language }}&amp;out={{ out }}&amp;ms={{ ms }}&amp;mr={{ m.id }}"
+              hx-get="/runs/confirm?lang={{ language }}&amp;ms={{ ms }}&amp;mr={{ m.id }}"
               hx-target="#run-action" hx-swap="outerHTML">{{ m.short }}</button>
       {%- endfor %}
     </div>
@@ -97,7 +81,7 @@
        carrying both, so `/runs/start` stays the short path a second press
        races against. #}
     <button class="btn btn--pri"
-            hx-post="/runs/start?lang={{ language }}&amp;out={{ out }}&amp;ms={{ ms }}&amp;mr={{ mr }}"
+            hx-post="/runs/start?lang={{ language }}&amp;ms={{ ms }}&amp;mr={{ mr }}"
             hx-target="#run-status" hx-swap="innerHTML"
             hx-disabled-elt="this"
             hx-on::before-request="document.getElementById('bar').classList.add('is-running')"

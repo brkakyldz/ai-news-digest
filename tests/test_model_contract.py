@@ -58,12 +58,12 @@ ANSWER = json.dumps(
 TOKENS_IN, TOKENS_OUT = 1438, 513
 
 
-def _completion(content: str | None) -> dict[str, Any]:
+def _completion(content: str | None, model: str = "gpt-5.6-luna") -> dict[str, Any]:
     return {
         "id": "chatcmpl-recorded",
         "object": "chat.completion",
         "created": 1_757_000_000,
-        "model": "gpt-5.6-luna",
+        "model": model,
         "choices": [
             {
                 "index": 0,
@@ -79,18 +79,39 @@ def _completion(content: str | None) -> dict[str, Any]:
     }
 
 
-def _client(content: str | None, requests: list[dict[str, Any]] | None = None) -> httpx.AsyncClient:
+def _client(
+    content: str | None,
+    requests: list[dict[str, Any]] | None = None,
+    model: str = "gpt-5.6-luna",
+) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         if requests is not None:
             requests.append(json.loads(request.content))
-        return httpx.Response(200, json=_completion(content))
+        return httpx.Response(200, json=_completion(content, model))
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-def _structured(settings: Settings, content: str | None, requests: Any = None) -> Any:
+def _structured(
+    settings: Settings,
+    content: str | None,
+    requests: Any = None,
+    **kwargs: Any,
+) -> Any:
     return make_llm(
-        "gpt-5.6-luna", settings, http_async_client=_client(content, requests)
+        "gpt-5.6-luna", settings, http_async_client=_client(content, requests), **kwargs
+    ).with_structured_output(ArticleSummary, include_raw=True)
+
+
+def _structured_for_model(
+    settings: Settings,
+    model: str,
+    content: str | None,
+    requests: Any = None,
+    **kwargs: Any,
+) -> Any:
+    return make_llm(
+        model, settings, http_async_client=_client(content, requests, model), **kwargs
     ).with_structured_output(ArticleSummary, include_raw=True)
 
 
@@ -98,7 +119,13 @@ def _structured(settings: Settings, content: str | None, requests: Any = None) -
 def keyed_settings(settings: Settings) -> Settings:
     """`make_llm` refuses to build a client without a key, and this is about the
     response rather than about that guard."""
-    return settings.model_copy(update={"openai_api_key": "sk-test-not-a-real-key"})
+    return settings.model_copy(
+        update={
+            "openai_api_key": "sk-test-not-a-real-key",
+            "openai_timeout_seconds": 5,
+            "openai_max_retries": 0,
+        }
+    )
 
 
 async def test_a_good_answer_arrives_as_parsed_with_the_three_contract_keys(
@@ -148,6 +175,41 @@ async def test_the_request_asks_for_a_json_schema_and_carries_no_tools(
     assert "tools" not in requests[0]
 
 
+async def test_gpt6_luna_uses_json_schema_and_omits_custom_temperature(
+    keyed_settings: Settings,
+) -> None:
+    requests: list[dict[str, Any]] = []
+    response = await _structured_for_model(
+        keyed_settings, "gpt-6-luna", ANSWER, requests, temperature=0.2
+    ).ainvoke("summarise this")
+
+    assert isinstance(response["parsed"], ArticleSummary)
+    assert len(requests) == 1
+    assert requests[0]["model"] == "gpt-6-luna"
+    assert requests[0]["response_format"]["type"] == "json_schema"
+    assert "tools" not in requests[0]
+    assert "temperature" not in requests[0]
+
+
+def test_only_exact_gpt6_luna_drops_the_temperature_argument(
+    keyed_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ainews.pipeline import llm as llm_module
+
+    received: list[dict[str, Any]] = []
+
+    def _capture(**kwargs: Any) -> object:
+        received.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(llm_module, "ChatOpenAI", _capture)
+    make_llm("gpt-6-luna", keyed_settings, temperature=0.2)
+    make_llm("gpt-5.6-luna", keyed_settings, temperature=0.2)
+
+    assert "temperature" not in received[0]
+    assert received[1]["temperature"] == 0.2
+
+
 async def test_a_schema_violation_raises_rather_than_becoming_parsing_error(
     keyed_settings: Settings,
 ) -> None:
@@ -177,6 +239,8 @@ async def test_an_empty_answer_arrives_as_parsed_none_with_something_to_log(
 
     assert response["parsed"] is None
     assert response["parsing_error"] is not None
+    usage = usage_from_message(response["raw"])
+    assert (usage.tokens_in, usage.tokens_out) == (TOKENS_IN, TOKENS_OUT)
 
 
 async def test_a_tool_call_answer_is_the_silent_shape(keyed_settings: Settings) -> None:

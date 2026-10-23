@@ -20,17 +20,25 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ainews.clock import local_day
 from ainews.config import Settings
-from ainews.db import Bulletin, Run, RunStep
+from ainews.db import Bulletin, BulletinItem, EvalResult, Run, RunStep, Summary, Verdict
 from ainews.db.models import utcnow
 from ainews.pipeline import graph as graph_module
 from ainews.pipeline import steps as steps_module
 from ainews.pipeline.nodes import rank as rank_module
 from ainews.pipeline.nodes import summarize as summarize_module
+from ainews.pipeline.nodes import translate as translate_module
 from ainews.pipeline.state import Pick, RankedDigest
 from ainews.pipeline.steps import step
 from ainews.web.format import format_step_duration
 from ainews.web.i18n import note_text, strings
-from test_graph import SUMMARY, FakeLLM, _no_collect, _no_enrich, _seed_articles
+from test_graph import (
+    SUMMARY,
+    FakeLLM,
+    FakeTranslationLLM,
+    _no_collect,
+    _no_enrich,
+    _seed_articles,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,6 +72,7 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ),
     )
+    monkeypatch.setattr(translate_module, "summarizer", lambda **_: FakeTranslationLLM())
 
 
 async def _rows(session: AsyncSession, run_id: str) -> list[RunStep]:
@@ -117,6 +126,7 @@ async def test_a_full_run_leaves_one_row_per_node_in_order(
         "enrich",
         "summarize",
         "rank",
+        "translate",
         "persist",
     ]
     assert all(r.finished_at is not None for r in rows)
@@ -146,6 +156,7 @@ async def test_the_steps_costs_add_up_to_the_runs_cost(
 
     assert by_node["summarize"].model == "gpt-5.6-luna"
     assert by_node["rank"].model == "gpt-5.6-terra"
+    assert by_node["translate"].model == "gpt-5.6-luna"
     total = sum(r.est_cost_usd for r in by_node.values())
     assert total == pytest.approx(run.est_cost_usd)
     # The four unpaid nodes must not be quietly priced at anything.
@@ -192,6 +203,7 @@ async def test_the_counts_are_the_nodes_own(
     assert by_node["dedupe"].n_in == 3 and by_node["dedupe"].n_out == 3
     assert by_node["summarize"].n_in == 3 and by_node["summarize"].n_out == 3
     assert by_node["rank"].n_in == 3 and by_node["rank"].n_out == 3
+    assert by_node["translate"].n_in == 3 and by_node["translate"].n_out == 3
     # The rank call's tokens are on their own channel, not on a fake summary.
     assert by_node["persist"].n_in == 3
 
@@ -212,6 +224,7 @@ async def test_a_partly_failed_fan_out_says_so(
             )
         ),
     )
+    monkeypatch.setattr(translate_module, "summarizer", lambda **_: FakeTranslationLLM())
     run = await _run_the_graph(session, monkeypatch, language="en")
     by_node = {r.node: r for r in await _rows(session, run.id)}
 
@@ -237,8 +250,7 @@ async def test_a_run_with_no_candidates_has_no_fan_out_row(
     nodes = [r.node for r in await _rows(session, run.id)]
 
     assert "summarize" not in nodes
-    assert "rank" not in nodes
-    assert nodes == ["collect", "dedupe", "enrich", "persist"]
+    assert nodes == ["collect", "dedupe", "enrich", "rank", "translate", "persist"]
 
 
 async def test_a_node_that_raises_still_leaves_its_row(
@@ -283,7 +295,7 @@ async def test_the_fan_out_lookup_never_kills_the_run(
     session: AsyncSession, settings: Settings, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`record_fan_out` reads two rows before it writes one, and it runs inside
-    `persist_node` ahead of `persist_run`. An unguarded read error there would
+    `rank_node` before ranking or translation. An unguarded read error there would
     not lose one row of bookkeeping - it would lose the digest the run paid for,
     because the node that writes it never gets to run."""
 
@@ -315,7 +327,7 @@ async def test_the_run_page_reads_each_node_in_its_own_words(
     run = await _run_the_graph(session, monkeypatch)
     body = client.get(f"/runs/{run.id}?lang=en").text
 
-    assert "Summarize" in body and "Rank" in body
+    assert "Summarize" in body and "Rank" in body and "Translate" in body
     # "In" and "out" are different quantities at every node, so each states its
     # own sentence rather than the table carrying one pair of headings.
     assert "candidates" in body and "kept" in body
@@ -356,19 +368,80 @@ async def test_the_run_page_shows_what_the_press_measured(
         await session.execute(select(Bulletin).where(Bulletin.run_id == run.id))
     ).scalar_one()
     assert bulletin.checks_json, "the press wrote them"
+    bulletin.agreement = None
+    await session.commit()
 
     body = client.get(f"/runs/{run.id}?lang=en").text
+    assert "Production agreement" in body and "n/a" in body
     assert "What this bulletin measured" in body
-    assert "Named the thing that made it news" in body
-    assert "Summary kept the word budget" in body
+    assert "Key fact named" in body
+    assert "Key fact retained in the writing" in body
+    assert "Article numeral retained" in body
+    assert "Ungrounded numerals" in body
+    assert "Why-it-matters over 20 words" in body
+    assert "Titles over 10 words" in body
+    assert "Tag singleton share" in body
+    assert "Categorized wrong feedback" in body
+    assert "Eval spend for this bulletin" in body and "$0.0000" in body
+    assert "Summary kept the word budget" not in body
     assert 'class="qual__b"' in body
-    # The row's number and its bar are the same quantity. `word_budget` counts
-    # the summaries that went *over*, and the row says how many kept it, so the
-    # share is inverted once - for both, or the page draws a full bar beside a
-    # 0% and means the opposite of what it says.
-    kept = body.split("Summary kept the word budget")[1][:400]
-    assert "100%" in kept, "the fake summaries are inside the budget"
-    assert "--w: 100" in kept
+    # The report and run detail use the same over-budget count and share.
+    over_budget = body.split("Summaries over 55 words")[1][:400]
+    assert "0/3 (0%)" in over_budget
+
+
+async def test_legacy_bulletin_shows_unavailable_metrics_without_recomputing(
+    client: TestClient,
+    session: AsyncSession,
+    settings: Settings,
+    fake_llm: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = await _run_the_graph(session, monkeypatch)
+    bulletin = (
+        await session.execute(select(Bulletin).where(Bulletin.run_id == run.id))
+    ).scalar_one()
+    bulletin.checks_json = None
+    bulletin.agreement = None
+    summary_ids = list(
+        (
+            await session.execute(
+                select(Summary.id)
+                .join(BulletinItem, BulletinItem.summary_id == Summary.id)
+                .where(BulletinItem.bulletin_id == bulletin.id)
+                .order_by(Summary.id)
+            )
+        ).scalars()
+    )
+    session.add_all(
+        [
+            Verdict(summary_id=summary_ids[0], verdict="wrong", reason="wrong_fact"),
+            Verdict(summary_id=summary_ids[1], verdict="wrong", reason="not_news"),
+            EvalResult(
+                bulletin_id=bulletin.id,
+                summary_id=summary_ids[0],
+                kind="grounding",
+                passed=False,
+                est_cost_usd=0.0123,
+            ),
+        ]
+    )
+    await session.commit()
+
+    body = client.get(f"/runs/{run.id}?lang=en").text
+    assert "Production agreement" in body and "n/a" in body
+    assert "Key fact named" in body
+    assert "Article numeral retained" in body
+    assert "Ungrounded numerals" in body
+    assert "Summaries over 55 words" in body and "n/a" in body
+    assert "Why-it-matters over 20 words" in body
+    assert "Titles over 10 words" in body
+    assert "Tag singleton share" in body
+    assert "Categorized wrong feedback" in body
+    assert "wrong_fact 1" in body and "not_news 1" in body
+    assert "Eval spend for this bulletin" in body and "$0.0123" in body
+    await session.refresh(bulletin)
+    assert bulletin.checks_json is None, "legacy checks remain uncomputed"
 
     # A run that published nothing has nothing to draw, and the block is absent
     # rather than empty - the same answer the step table gives for no steps.
@@ -464,6 +537,15 @@ def test_a_step_is_timed_at_a_steps_scale() -> None:
     assert format_step_duration(tr, 0.04) == "< 0,1 sn"
     assert format_step_duration(tr, 24.6) == "24,6 sn"
     assert format_step_duration(en, 24.6) == "24.6s"
+
+
+def test_quality_labels_name_the_content_checks() -> None:
+    t = strings("en")
+
+    assert t["quality_key_fact"] == "Key fact named"
+    assert t["quality_key_fact_kept"] == "Key fact retained in the writing"
+    assert t["quality_numeral_recall"] == "Article numeral retained"
+    assert t["quality_ungrounded"] == "Ungrounded numerals"
 
 
 def test_a_step_just_under_a_minute_reads_as_a_minute() -> None:
