@@ -22,6 +22,9 @@ This contract is frozen before the wave-2 implementation lanes start.
   item set, one agreement value and one version namespace, with TR text beside it.
 - An additive Alembic revision after 0008 creates these objects and leaves all
   existing rows, verdict IDs, historical checks and model metadata intact.
+  The historical revision identity is `0008_published_checks`; `0008` is only
+  shorthand, not a valid `alembic_version.version_num` value. The new revision
+  is `0009_bilingual_publication`.
 
 ## Paid pipeline and publication
 
