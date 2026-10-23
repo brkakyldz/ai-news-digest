@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ainews.clock import local_day
 from ainews.config import Settings
-from ainews.db import Bulletin, Run, RunStep
+from ainews.db import Bulletin, BulletinItem, EvalResult, Run, RunStep, Summary, Verdict
 from ainews.db.models import utcnow
 from ainews.pipeline import graph as graph_module
 from ainews.pipeline import steps as steps_module
@@ -363,15 +363,68 @@ async def test_the_run_page_shows_what_the_press_measured(
     assert "Production agreement" in body and "n/a" in body
     assert "What this bulletin measured" in body
     assert "Named the thing that made it news" in body
-    assert "Summary kept the word budget" in body
+    assert "Why-it-matters over 20 words" in body
+    assert "Titles over 10 words" in body
+    assert "Tag singleton share" in body
+    assert "Categorized wrong feedback" in body
+    assert "Eval spend for this bulletin" in body and "$0.0000" in body
+    assert "Summary kept the word budget" not in body
     assert 'class="qual__b"' in body
-    # The row's number and its bar are the same quantity. `word_budget` counts
-    # the summaries that went *over*, and the row says how many kept it, so the
-    # share is inverted once - for both, or the page draws a full bar beside a
-    # 0% and means the opposite of what it says.
-    kept = body.split("Summary kept the word budget")[1][:400]
-    assert "100%" in kept, "the fake summaries are inside the budget"
-    assert "--w: 100" in kept
+    # The report and run detail use the same over-budget count and share.
+    over_budget = body.split("Summaries over 55 words")[1][:400]
+    assert "0/3 (0%)" in over_budget
+
+
+async def test_legacy_bulletin_shows_unavailable_metrics_without_recomputing(
+    client: TestClient,
+    session: AsyncSession,
+    settings: Settings,
+    fake_llm: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = await _run_the_graph(session, monkeypatch)
+    bulletin = (
+        await session.execute(select(Bulletin).where(Bulletin.run_id == run.id))
+    ).scalar_one()
+    bulletin.checks_json = None
+    bulletin.agreement = None
+    summary_ids = list(
+        (
+            await session.execute(
+                select(Summary.id)
+                .join(BulletinItem, BulletinItem.summary_id == Summary.id)
+                .where(BulletinItem.bulletin_id == bulletin.id)
+                .order_by(Summary.id)
+            )
+        ).scalars()
+    )
+    session.add_all(
+        [
+            Verdict(summary_id=summary_ids[0], verdict="wrong", reason="wrong_fact"),
+            Verdict(summary_id=summary_ids[1], verdict="wrong", reason="not_news"),
+            EvalResult(
+                bulletin_id=bulletin.id,
+                summary_id=summary_ids[0],
+                kind="grounding",
+                passed=False,
+                est_cost_usd=0.0123,
+            ),
+        ]
+    )
+    await session.commit()
+
+    body = client.get(f"/runs/{run.id}?lang=en").text
+    assert "Production agreement" in body and "n/a" in body
+    assert "Named the thing that made it news" in body
+    assert "Summaries over 55 words" in body and "n/a" in body
+    assert "Why-it-matters over 20 words" in body
+    assert "Titles over 10 words" in body
+    assert "Tag singleton share" in body
+    assert "Categorized wrong feedback" in body
+    assert "wrong_fact 1" in body and "not_news 1" in body
+    assert "Eval spend for this bulletin" in body and "$0.0123" in body
+    await session.refresh(bulletin)
+    assert bulletin.checks_json is None, "legacy checks remain uncomputed"
 
     # A run that published nothing has nothing to draw, and the block is absent
     # rather than empty - the same answer the step table gives for no steps.
