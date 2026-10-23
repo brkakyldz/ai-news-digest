@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from ainews.clock import local_zone
 from ainews.config import Settings, get_settings
 
 log = logging.getLogger(__name__)
@@ -48,8 +49,9 @@ async def _collect_job() -> None:
 
 def build_scheduler(settings: Settings | None = None) -> AsyncIOScheduler:
     settings = settings or get_settings()
+    timezone = local_zone(settings)
     scheduler = AsyncIOScheduler(
-        timezone=settings.timezone,
+        timezone=timezone,
         job_defaults={
             "coalesce": True,
             "max_instances": 1,
@@ -82,7 +84,7 @@ def start_scheduler(settings: Settings | None = None) -> AsyncIOScheduler:
     scheduler.start()
     log.info(
         "scheduler started (%s): collect every %dh; the digest is manual",
-        settings.timezone,
+        local_zone(settings),
         settings.collect_interval_hours,
     )
     return scheduler

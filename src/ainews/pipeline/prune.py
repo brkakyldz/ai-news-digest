@@ -25,9 +25,9 @@ from datetime import timedelta
 from sqlalchemy import delete, select, text, update
 
 from ainews.config import Settings, get_settings
-from ainews.db import Article, Summary
+from ainews.db import Article, Run, Summary
 from ainews.db.models import utcnow
-from ainews.db.session import session_scope
+from ainews.db.session import get_engine
 from ainews.pipeline.runner import RunBusy, run_in_flight
 
 log = logging.getLogger(__name__)
@@ -50,9 +50,10 @@ class PruneReport:
 async def prune(settings: Settings | None = None, *, dry_run: bool = False) -> PruneReport:
     """Drop the dead articles nothing can reach.
 
-    Refuses while a run holds the slot: a digest in flight is collecting the
-    very articles this would count, and an article summarised a second after
-    the count is one this would then delete out from under a live summary.
+    Refuses while a run holds the process-local slot or has a persisted running
+    row. The SQLite write reservation covers the persisted check and article
+    selection/deletion, so a run starting in another process waits until prune
+    commits before it can begin collecting.
     """
     settings = settings or get_settings()
     if run_in_flight():
@@ -73,21 +74,33 @@ async def _prune_articles(settings: Settings, *, dry_run: bool) -> int:
         .where(Article.fetched_at < horizon)
         .where(~select(Summary.id).where(Summary.article_id == Article.id).exists())
     )
-    async with session_scope() as session:
-        ids = list((await session.execute(dead)).scalars())
-        if not ids or dry_run:
+    async with get_engine().connect() as conn:
+        # A plain read transaction leaves a gap between deciding what is dead
+        # and deleting it. BEGIN IMMEDIATE reserves SQLite's single writer slot
+        # before checking the run table, and holds it through the article write.
+        await conn.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            running = await conn.scalar(select(Run.id).where(Run.status == "running").limit(1))
+            if running is not None:
+                raise RunBusy("a run is in flight; prune when it has finished")
+
+            ids = list((await conn.execute(dead)).scalars())
+            if ids and not dry_run:
+                # A surviving article may be marked a duplicate *of* one that
+                # is going. The mark is inspectable history, not a foreign key
+                # worth keeping the target alive for, so clear it first.
+                await conn.execute(
+                    update(Article).where(Article.dup_of.in_(ids)).values(dup_of=None)
+                )
+                # A duplicate inside the doomed set points at another member,
+                # and foreign-key enforcement refuses deletion in any order.
+                await conn.execute(update(Article).where(Article.id.in_(ids)).values(dup_of=None))
+                await conn.execute(delete(Article).where(Article.id.in_(ids)))
+            await conn.commit()
             return len(ids)
-        # A surviving article may be marked a duplicate *of* one that is going.
-        # The mark is inspectable history, not a foreign key worth keeping the
-        # target alive for, so it is cleared rather than cascading the delete
-        # into a row that carries a summary.
-        await session.execute(update(Article).where(Article.dup_of.in_(ids)).values(dup_of=None))
-        # Two passes over the doomed set itself: a duplicate inside it points at
-        # another member, and `PRAGMA foreign_keys=ON` refuses the delete in
-        # whatever order SQLite picks.
-        await session.execute(update(Article).where(Article.id.in_(ids)).values(dup_of=None))
-        await session.execute(delete(Article).where(Article.id.in_(ids)))
-    return len(ids)
+        except BaseException:
+            await conn.rollback()
+            raise
 
 
 async def _reclaim_database(*, dry_run: bool) -> int:

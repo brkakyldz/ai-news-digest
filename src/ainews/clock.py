@@ -18,12 +18,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ainews.config import get_settings
+from ainews.config import Settings, get_settings
 
 
-def local_zone() -> ZoneInfo:
+def local_zone(settings: Settings | None = None) -> ZoneInfo:
+    settings = settings or get_settings()
     try:
-        return ZoneInfo(get_settings().timezone)
+        return ZoneInfo(settings.timezone)
     except Exception:
         # A bad IANA name must not take the dashboard down or stop a run; UTC
         # is legible and every timestamp is already in it.

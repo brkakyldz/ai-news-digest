@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from ainews.clock import local_zone
+from ainews.config import Settings
 from ainews.db import Article, Run, RunStep, Source, Summary
 
 
@@ -101,3 +103,9 @@ async def test_every_timestamped_table_reads_back_aware(
         (await session.execute(select(Summary))).scalar_one().created_at,
     ):
         assert value is not None and value.tzinfo is not None
+
+
+def test_invalid_configured_timezone_uses_utc() -> None:
+    settings = Settings(timezone="Europe/Istambul")
+
+    assert local_zone(settings).key == "UTC"
