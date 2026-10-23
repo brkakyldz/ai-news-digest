@@ -11,6 +11,10 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=1024]
+        # The README's two GIFs are the exception: a moving picture of the app
+        # cannot fit in a megabyte, and the guard is for data and binaries that
+        # land by accident, not for media written by scripts/readme_media.py.
+        exclude: ^docs/media/[^/]+\.gif$
       - id: detect-private-key
 
   - repo: local

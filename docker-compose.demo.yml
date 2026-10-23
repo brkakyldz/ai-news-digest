@@ -12,7 +12,7 @@
 services:
   demo:
     build: .
-    image: ai-research-agent:latest
+    image: ai-news-digest:latest
     container_name: ainews-demo
     restart: unless-stopped
     # No `env_file`. Nothing here is secret and nothing here is the operator's

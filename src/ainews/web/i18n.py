@@ -39,7 +39,7 @@ THEMES: Final[tuple[str, ...]] = ("system", "light", "dark")
 # a placeholder starts wherever the value starts.
 STRINGS: Final[dict[str, dict[str, str]]] = {
     "tr": {
-        "title": "AI Digest",
+        "title": "AI News Digest",
         "run_now": "Yenile",
         "run_start": "Çalıştır",
         # The question in front of the press, and it never restates the state
@@ -322,7 +322,7 @@ STRINGS: Final[dict[str, dict[str, str]]] = {
         "feed_blocked": "Bu kaynak kapsam dışı",
     },
     "en": {
-        "title": "AI Digest",
+        "title": "AI News Digest",
         "run_now": "Refresh",
         "run_start": "Run now",
         "confirm_what": "{n} sources will be polled and what is new summarised.",

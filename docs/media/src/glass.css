@@ -1,0 +1,71 @@
+/* The README's look, and only the README's: frosted glass over a sea photo.
+   The app's own palette lives in theme.css; these pages are a frame around it,
+   so nothing here is shared with the product and nothing in the product reads
+   this file. Rendered by scripts/readme_media.py. */
+
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=block");
+
+:root {
+  --ink: #ffffff;
+  --ink-soft: rgba(255, 255, 255, 0.78);
+  --ink-faint: rgba(255, 255, 255, 0.56);
+  --ink-dark: #1d2a3a;
+  --glass: rgba(236, 242, 250, 0.16);
+  --glass-strong: rgba(236, 242, 250, 0.32);
+  --rim: rgba(255, 255, 255, 0.42);
+  --rim-soft: rgba(255, 255, 255, 0.22);
+  --money: #ffd88a;
+  --ok: #9ff0c4;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: var(--w);
+  height: var(--h);
+  overflow: hidden;
+  font-family: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.sea {
+  position: absolute;
+  inset: 0;
+  background: url("sea.jpg") center / cover no-repeat;
+}
+
+/* The photo's sky is bright; a slow fall to navy keeps white type legible
+   wherever a card lands on it. */
+.sea::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(20, 36, 60, 0.10) 0%, rgba(14, 28, 50, 0.38) 100%);
+}
+
+.glass {
+  position: absolute;
+  background: var(--glass);
+  border: 1.5px solid var(--rim-soft);
+  border-top-color: var(--rim);
+  border-radius: 34px;
+  backdrop-filter: blur(22px) saturate(1.25);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -18px 40px rgba(255, 255, 255, 0.05),
+    0 30px 60px rgba(8, 20, 40, 0.28);
+}
+
+.pill, .round {
+  background: var(--glass-strong);
+  border: 1.5px solid var(--rim);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 8px 20px rgba(8, 20, 40, 0.18);
+  color: var(--ink-dark);
+}
+
+.pill { border-radius: 999px; }
+.round { border-radius: 50%; display: grid; place-items: center; }
+
+.num { font-variant-numeric: tabular-nums; }

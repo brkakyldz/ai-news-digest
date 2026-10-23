@@ -1,7 +1,7 @@
 [project]
 name = "ainews"
 version = "0.1.0"
-description = "Local-first LangGraph agent that collects, dedupes, summarises and ranks the day's AI news into a single digest."
+description = "Local-first LangGraph pipeline that collects, dedupes, summarises and ranks the day's AI news into one bilingual daily bulletin."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -10,7 +10,7 @@ show real summaries rather than fixtures.
     uv run python scripts/screenshots.py            # all of them
     uv run python scripts/screenshots.py runs.png   # just the one that changed
 
-Naming files is what keeps a one-page change from rewriting the other seven: the
+Naming files is what keeps a one-page change from rewriting the other one: the
 pictures are taken against live data, so a shot that did not need refreshing
 still comes back a few pixels different and lands in the diff.
 """
@@ -56,19 +56,16 @@ class Shot(NamedTuple):
 
 
 SHOTS: list[Shot] = [
-    Shot("/?theme=dark", "digest.png"),
-    Shot("/?theme=light", "digest-light.png"),
-    Shot("/sources?theme=dark", "sources.png"),
-    Shot("/runs?theme=dark", "runs.png"),
+    # Two stills: the hero GIF (`scripts/readme_media.py`) already moves through
+    # the digest, both languages, both themes and search, so a still of each
+    # would show the reader the same page a second time.
+    Shot("/?theme=light&lang=en", "digest-light.png"),
     # `{run}` is filled in with the newest bulletin's id: the page is about one
     # run, and hard-coding an id would make the script stop working the first
     # time the database it reads is not the one it was written against.
-    # The node table and the retained quality rows need a taller window; the
-    # shell clips at the viewport, so a short capture cuts the checks in half.
-    Shot("/runs/{run}?theme=dark", "run-detail.png", height=1420),
-    Shot("/runs/verdicts?theme=dark", "verdicts.png"),
-    Shot("/search?q=model&theme=dark", "search.png"),
-    Shot("/archive?theme=light", "archive-light.png"),
+    # The window ends where the quality checks end, so the shot has no empty
+    # ground under the last row.
+    Shot("/runs/{run}?theme=dark&lang=en", "run-detail.png", height=1100),
 ]
 
 
