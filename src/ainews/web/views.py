@@ -101,9 +101,31 @@ def build_header(
         n_stories=n_stories,
         n_sources=n_sources,
         bulletin_language=(
-            bulletin.language if bulletin is not None and bulletin.language != language else None
+            bulletin.language
+            if bulletin is not None and not bulletin.bilingual and bulletin.language != language
+            else None
         ),
     )
+
+
+def project_editor_note(
+    bulletin: Bulletin | None, language: Language
+) -> tuple[str | None, str | None]:
+    """Select the stored note and identify its actual prose language.
+
+    A bilingual publication keeps the canonical note in English and stores its
+    Turkish prose alongside it. Historical bulletins retain their original
+    language, and an incomplete bilingual note remains visibly English.
+    """
+    if bulletin is None:
+        return None, None
+
+    if bulletin.bilingual:
+        if language == "tr" and bulletin.editor_note_tr and bulletin.editor_note_tr.strip():
+            return bulletin.editor_note_tr, "tr"
+        return bulletin.editor_note, "en"
+
+    return bulletin.editor_note, bulletin.language
 
 
 async def count_items(session: AsyncSession, bulletin: Bulletin) -> int:

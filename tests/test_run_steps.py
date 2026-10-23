@@ -362,7 +362,10 @@ async def test_the_run_page_shows_what_the_press_measured(
     body = client.get(f"/runs/{run.id}?lang=en").text
     assert "Production agreement" in body and "n/a" in body
     assert "What this bulletin measured" in body
-    assert "Named the thing that made it news" in body
+    assert "Key fact named" in body
+    assert "Key fact retained in the writing" in body
+    assert "Article numeral retained" in body
+    assert "Ungrounded numerals" in body
     assert "Why-it-matters over 20 words" in body
     assert "Titles over 10 words" in body
     assert "Tag singleton share" in body
@@ -415,7 +418,9 @@ async def test_legacy_bulletin_shows_unavailable_metrics_without_recomputing(
 
     body = client.get(f"/runs/{run.id}?lang=en").text
     assert "Production agreement" in body and "n/a" in body
-    assert "Named the thing that made it news" in body
+    assert "Key fact named" in body
+    assert "Article numeral retained" in body
+    assert "Ungrounded numerals" in body
     assert "Summaries over 55 words" in body and "n/a" in body
     assert "Why-it-matters over 20 words" in body
     assert "Titles over 10 words" in body
@@ -520,6 +525,15 @@ def test_a_step_is_timed_at_a_steps_scale() -> None:
     assert format_step_duration(tr, 0.04) == "< 0,1 sn"
     assert format_step_duration(tr, 24.6) == "24,6 sn"
     assert format_step_duration(en, 24.6) == "24.6s"
+
+
+def test_quality_labels_name_the_content_checks() -> None:
+    t = strings("en")
+
+    assert t["quality_key_fact"] == "Key fact named"
+    assert t["quality_key_fact_kept"] == "Key fact retained in the writing"
+    assert t["quality_numeral_recall"] == "Article numeral retained"
+    assert t["quality_ungrounded"] == "Ungrounded numerals"
 
 
 def test_a_step_just_under_a_minute_reads_as_a_minute() -> None:

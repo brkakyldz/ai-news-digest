@@ -6,14 +6,9 @@ run row it writes is identical too. When it is worth pressing is the advice bloc
 above it, computed in `views.build_advice` and never enforced here: this route
 refuses a press for two reasons only, a run in flight and a missing key.
 
-The press carries three choices, and they are all the same kind of thing: a
-property of *this* press, asked next to the money, defaulting to the environment
-and remembered nowhere.
-
-`?out=` is which language the bulletin will be written in. It lives here and not
-in the bar's TR/EN switch, which translates the interface and nothing else
-(ADR 0017) - a preference about what the buttons say has no business deciding
-what a paid run produces.
+The press carries two choices, both properties of *this* press, asked next to
+the money and remembered nowhere. New bulletins always contain English and
+Turkish prose; the interface language does not change the paid work.
 
 `?ms=` and `?mr=` are which model summarises and which model ranks (ADR 0020).
 Two and not one because the pipeline has always had two knobs for a reason
@@ -89,7 +84,7 @@ async def _guarded(language: str, models: tuple[str, str], token: str) -> None:
 
     try:
         await run_digest(
-            language=language,  # type: ignore[arg-type]
+            language="en",  # type: ignore[arg-type]
             model_summarize=models[0],
             model_rank=models[1],
             reserved_token=token,
@@ -117,7 +112,6 @@ async def _action_context(
     session: AsyncSession,
     language: str,
     asking: bool,
-    out: str,
     models: tuple[str, str],
     settings: Settings,
 ) -> dict[str, object]:
@@ -150,7 +144,6 @@ async def _action_context(
         "t": strings(language),  # type: ignore[arg-type]
         "advice": advice,
         "asking": asking,
-        "out": out,
         "n_sources": await count_enabled_sources(session),
         "n_candidates": await count_candidates(session) if asking else None,
         "last_cost": advice.last.est_cost_usd if advice.last else None,
@@ -167,11 +160,10 @@ async def _render_action(
     session: AsyncSession,
     language: str,
     asking: bool,
-    out: str,
     models: tuple[str, str],
     settings: Settings,
 ) -> HTMLResponse:
-    context = await _action_context(request, session, language, asking, out, models, settings)
+    context = await _action_context(request, session, language, asking, models, settings)
     return get_templates(request).TemplateResponse(request, "_run_action.html", context)
 
 
@@ -192,7 +184,6 @@ async def run_action(
         session,
         language,
         asking=False,
-        out=_valid(out, language),
         models=_models(ms, mr, settings),
         settings=settings,
     )
@@ -210,13 +201,10 @@ async def run_confirm(
 ) -> HTMLResponse:
     """The question. Pressing the button gets here and no further.
 
-    Every slot in the question - the two output languages, the two rows of
-    models - re-enters this same route with one parameter changed and the others
-    carried through, which is why choosing costs no JavaScript and no client
-    state: the fragment is re-rendered with a different slot marked, exactly the
-    way the question itself is swapped in and out. Carrying the others through
-    is the whole trick; a slot that forgot the neighbouring choice would quietly
-    reset a model to the default on the way to picking a language.
+    The two model rows re-enter this same route with one parameter changed and
+    the other carried through, so choosing costs no JavaScript or client state.
+    `out` remains accepted for bookmarked legacy confirmation URLs, but new
+    publications always contain English and Turkish prose.
     """
     language = _valid(lang, language_of(request))
     return await _render_action(
@@ -224,7 +212,6 @@ async def run_confirm(
         session,
         language,
         asking=True,
-        out=_valid(out, language),
         models=_models(ms, mr, settings),
         settings=settings,
     )
@@ -270,12 +257,8 @@ async def start_run(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     language = _valid(lang, language_of(request))
-    # What the run writes, which is not what the page says. A press with no
-    # `?out=` - the CLI's shape, or a stale fragment - falls back to the page's
-    # language, so the old single-value behaviour is still the default rather
-    # than an error. The models resolve the same way and for the same reason: a
-    # press that names nothing is the press this route answered before ADR 0020.
-    produce = _valid(out, language)
+    # New runs always publish both prose languages. Keep accepting `out` so
+    # stale links remain harmless, but never let it select paid work.
     models = _models(ms, mr, settings)
     t = strings(language)  # type: ignore[arg-type]
 
@@ -286,11 +269,11 @@ async def start_run(
     # schedules, so a second press arriving before the task's first line would
     # find the slot still free and start a second - paid - digest. The run holds
     # the same token from there on.
-    token = f"manual:{produce}:{models[0]}:{models[1]}"
+    token = f"manual:en+tr:{models[0]}:{models[1]}"
     if not await reserve_slot(token, "digest"):
         return HTMLResponse(t["busy"])
     # Fire and forget: the caller gets an answer now, the run finishes later.
-    task = asyncio.create_task(_guarded(produce, models, token))
+    task = asyncio.create_task(_guarded("en", models, token))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
 
@@ -380,11 +363,9 @@ async def verdicts_page(
 
     The third is `eval_results`: the summaries the grounding judge failed, with
     the sentence it could not support, each with the two words under it. The
-    judge's failures are the most informative thing the evaluation layer
-    produces and they are otherwise printed once at a terminal and filed; a
-    reader who answers one of them here gives the label that measures
-    the judge's precision directly, which is the number a one-reader tool acts
-    on. Ten of those carry more than a hundred `ok`s on random stories.
+    judge's failures are useful examples of claims the source article does not
+    support. The reader can inspect each claim and record a wrong-only verdict
+    with its category and an optional note.
     """
     language = language_of(request)
     context = await shell_context(request, session, language, page="runs")
