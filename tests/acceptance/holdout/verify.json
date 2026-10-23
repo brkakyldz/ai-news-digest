@@ -1,0 +1,9 @@
+{
+  "command": "C:/search_agent/.venv/Scripts/python.exe tests/acceptance/holdout/run_acceptance.py",
+  "format": "junit",
+  "report": "C:/scratch/2026-10-23_search-agent-issues/holdout.xml",
+  "expected": ["H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08", "H09", "H10"],
+  "runs": 3,
+  "perScenario": 2,
+  "overall": 0.9
+}

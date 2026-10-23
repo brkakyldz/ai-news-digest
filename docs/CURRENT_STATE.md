@@ -18,7 +18,7 @@ active_run: docs/runs/2026-10-23_issues.md
 
 ## Open gates
 
-- Independent acceptance scenarios must land before implementation.
+- Wave-1 independent scenarios landed; their integrated execution is still open.
 - Bilingual schema/read contract must be frozen before wave 2.
 - Full combined tests, review and GitHub CI must pass before delivery.
 
@@ -28,4 +28,4 @@ None. The owner waived the other-runtime requirement for the independent author.
 
 ## Next
 
-Land independently authored wave-1 scenarios and dispatch the three isolated lanes.
+Dispatch the three isolated wave-1 lanes from the committed acceptance base.

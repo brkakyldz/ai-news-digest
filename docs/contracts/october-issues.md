@@ -50,8 +50,9 @@ dummy API credentials in offline scenarios; no real network/model calls.
 dispatch; use the installed `ainews.exe` entry point with PYTHONPATH set to the
 target checkout's `src`, or launch `python -c 'from ainews.cli import main; main()'`
 as the CLI process. This tiny subprocess launcher is permitted; test files must
-not import product internals. `ainews serve --host 127.0.0.1 --port PORT` starts
-HTTP; `/health` is the health route (verify actual response contract before using).
+not import product internals. `HOST=127.0.0.1` and `PORT=PORT` in the child
+environment followed by `ainews serve` starts HTTP; serve takes no host/port
+CLI options. `/health` is the health route.
 
 Initialize an isolated DB through `ainews demo seed`, or `ainews sources` to
 create schema/seed sources. CLI and server take DATABASE_URL, OPENAI_API_KEY,
@@ -87,3 +88,62 @@ Output artifacts go into the test temp directory, never docs/evals.md.
 Wave-2 schema and deterministic provider stand-in are specified in v2 before
 R10 scenarios are authored. Wave-1 acceptance covers R2/R3/R4/R5/R7/R8/R9/R11;
 R3 can be authored now but is only gated after wave 2.
+
+## Wave-1 observable fixture and presentation details
+
+Report output is UTF-8 Markdown regardless of filename extension. Its window
+summary includes `Product spend $0.1080` for two digest runs costing 0.104 and
+0.004, and separate `eval spend $...`. Per-bulletin headings start `### Bulletin`.
+The keep-list rows include `Key fact named`, `kept in the writing`,
+`A body figure survives into the summary`, `Ungrounded numerals`,
+`Summaries over 55 words`, `Why-it-matters over 20 words`, `Titles over 10 words`
+and tag vocabulary/filter diagnostics. Production agreement is written as
+`agreement 0.82` or `agreement n/a` in report bulletin headings. Run detail
+must expose an English label containing `agreement` and an honest missing marker
+(`n/a` or an em dash); use `lang=en`. Feedback categories use their stable slugs
+in reports. No precision or TNR row/claim remains in newly generated output.
+
+On the digest, each visible story has `id="story-SUMMARY_ID"`; story membership
+can be counted by those IDs. Topic pills are anchor links with `tag=TAG` in href
+and visible tag/count text. Parse anchors and their text without relying on
+whitespace, class order or exact typography. For a deterministic topic fixture,
+clone a demo article and summary into a fresh ID/unique URL with relevant=false,
+same language and created_at on the latest bulletin's day, unique phantom tag,
+and no bulletin item. Make a second relevant non-published clone with another
+unique tag. Counts must reflect only visible stories, never the irrelevant clone.
+The demo contract promises at least one article, summary, run, bulletin and item;
+it does not promise any particular existing irrelevant row. Clone all existing
+columns via sqlite3 PRAGMA/SELECT and change unique values, rather than depending
+on ORM defaults being SQL defaults. Run statuses are running, ok, partial, error.
+Create one running collect or digest at a time, check both prune forms, remove
+that fixture, then test the other kind independently. `--dry-run` must preserve
+the same counts as a refused real prune; successful prune should also be exercised
+with a truly old unsummarized fixture article and preserved history counts.
+
+SQLite DATABASE_URL uses `sqlite+aiosqlite:///ABSOLUTE/PATH`. All external sources
+must be disabled after fixture initialization; scheduled collection must never
+contact publishers in acceptance tests. Model setting keys are OPENAI_MODEL,
+OPENAI_MODEL_SUMMARIZE and OPENAI_MODEL_JUDGE. Override them deliberately in
+subprocess environments rather than inventing aliases. To verify built-in defaults
+independently of operator settings, run the CLI/server with working directory a
+temporary checkout-shaped directory containing a copy of the target's `src`
+(no secrets) and set PYTHONPATH to that isolated src; this prevents the settings
+loader's project-relative operator file from participating. Alternatively use
+explicit model environment values for UI override behavior and leave built-in
+defaults to lane C's focused config tests; record that coverage limit honestly.
+
+Run-confirmation query parameters are `ms` (summarize) and `mr` (rank); valid
+explicit legacy override `gpt-5.6-terra` remains supported. Model buttons carry
+the full model ID in `title` and mark selection with `aria-current="true"`.
+Do not infer selection from mere model-name presence in the menu. The confirmation
+GET must leave the run count unchanged. POST /verdict with same-origin Origin
+header needs no CSRF token and returns HTTP 200 on valid form, 422 on invalid
+verdict/reason. Do not guess token conventions. Stored historical ok rows remain
+unchanged and their summary offers no positive action in active UI.
+
+R5 transaction interleaving and R11 outbound API parameters are covered by focused
+lane regression/transport tests and the bounded real spike, since they have no
+stable public pause/inspection surface. Holdout scenarios must cover the visible
+refusal/preservation/model-choice behavior without pretending to prove those
+internal timing/transport properties. H03 must actually assert spend arithmetic
+and bulletin-detail narrowing, rather than only command success.
