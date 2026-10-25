@@ -1,0 +1,70 @@
+{# The foot of one story: its topics, the reader's verdict, the way to the
+   source - and, when the verdict is "wrong", one line for the reason.
+
+   One fragment rather than a control inside the foot, because the note has to
+   land *under* the foot line and a control that grows a second row inside a
+   flex row pushes its neighbours about. So `POST /verdict` answers with this
+   whole block and HTMX swaps it in place (`hx-swap="outerHTML"`), the same
+   shape as `_run_action.html`: the page never reloads under a reader who is
+   halfway down it.
+
+   Placement was picked by drawing the alternatives (E2.1): the reader's own
+   line, beside the other things the reader does, leaving the meta line to the
+   machine. It is drawn at rest and not under the pointer - the reader's
+   wrong-only label should be visible when they can make it. #}
+<div class="item__f" id="foot-{{ story.id }}">
+  {% if story.tags %}
+  {# Three, not all of them: the tag row is orientation, and a story
+     carrying eight of them is telling the reader nothing by the fourth.
+     They are set as quiet text rather than as filled pills - the pills at
+     the top of the page are the filter, and forty-five identical pills
+     under the stories made the reader check every one of them to find out
+     which were controls. Same face and size as before, no fill. #}
+  <span class="chips">
+    {% for name in story.tags[:3] %}
+    <a class="chip" href="/?lang={{ language }}&amp;all=1&amp;tag={{ name }}">{{ name }}</a>
+    {% endfor %}
+  </span>
+  {% endif %}
+
+  {# The two words themselves are `_verdict_words.html`, which the findings
+     table on `/runs/verdicts` draws too. Here the swap target is this whole
+     foot, so a "wrong" grows its note line under it. #}
+  {% with sid=story.id, verdict=story.verdict, target='#foot-' ~ story.id, frag=None %}{% include "_verdict_words.html" %}{% endwith %}
+
+  <a class="go" href="{{ story.url }}" target="_blank" rel="noreferrer noopener">
+    {{ t.open_source }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>
+  </a>
+
+  {% if story.verdict == 'wrong' %}
+  {# Which of the four the "wrong" was about. Four separate claims sit in one
+     story block - the facts, that this is AI news, that it is not the story
+     above it again, and the size the editor gave it. The category tells the
+     next reader which claim the person marked wrong. Asked after the click so
+     the first press is still one word. #}
+  <div class="vd-why">
+    <span class="vd-why__q">{{ t.verdict_why }}</span>
+    {% for value in reasons %}
+    <button type="button" class="vd-why__b"
+            aria-pressed="{{ 'true' if story.verdict_reason == value else 'false' }}"
+            hx-post="/verdict?lang={{ language }}"
+            hx-vals='{"summary_id": {{ story.id }}, "verdict": "wrong", "reason": "{{ value }}"}'
+            hx-target="#foot-{{ story.id }}" hx-swap="outerHTML">{{ t['reason_' ~ value] }}</button>
+    {% endfor %}
+  </div>
+
+  {# The reader's own words, one line, optional. It is what a judge prompt gets
+     rewritten from when the numbers say so (E5), so it is asked for at the
+     moment the reader has it and never again. #}
+  <form class="vd-note"
+        hx-post="/verdict?lang={{ language }}"
+        hx-target="#foot-{{ story.id }}" hx-swap="outerHTML">
+    <input type="hidden" name="summary_id" value="{{ story.id }}">
+    <input type="hidden" name="verdict" value="wrong">
+    <input type="text" name="note" value="{{ story.verdict_note or '' }}"
+           placeholder="{{ t.verdict_note }}" maxlength="500" autocomplete="off">
+    <button type="submit">{{ t.verdict_save }}</button>
+    {% if saved and story.verdict_note %}<span class="vd-note__ok">{{ t.verdict_saved }}</span>{% endif %}
+  </form>
+  {% endif %}
+</div>

@@ -1,0 +1,7 @@
+{# Only an explicit wrong-feedback action is active. #}
+<span class="vd" role="group" id="vd-{{ sid }}">
+  <button type="button" aria-pressed="{{ 'true' if verdict == 'wrong' else 'false' }}"
+          hx-post="/verdict?lang={{ language }}"
+          hx-vals='{"summary_id": {{ sid }}, "verdict": "wrong"{% if frag %}, "frag": "{{ frag }}"{% endif %}}'
+          hx-target="{{ target }}" hx-swap="outerHTML">{{ t.verdict_wrong }}</button>
+</span>

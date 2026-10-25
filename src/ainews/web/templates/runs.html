@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {# What used to be a 07:00 cron is this section (ADR 0015). The digest is the
+     one thing here that spends money, so it is started by a person - and a tool
+     that asks to be started owes the reader the four facts the decision needs:
+     what state it is in, why, when it last ran, and how long until running
+     again is worth it.
+
+     It carries no button of its own. The one in the rail is two hundred pixels
+     to the left of this sentence and on every page, so a second copy here would
+     be two controls doing one thing on one screen - the reader wondering
+     whether they differ. This block is the reasoning behind that button, which
+     is the half the button cannot carry.
+
+     It advises and it does not refuse. The rail's button is disabled only when
+     a press could not work at all - a run already in flight, or no key - never
+     because the tool disagrees about the timing. `data-state` changes what this
+     section says, never what the reader is allowed to do; it is on the element
+     so the state is visible in the DOM to a test and to whoever reads it
+     later. #}
+  <section class="advice" data-state="{{ advice.state }}">
+    <div class="advice__say">
+      <p class="advice__state{% if advice.state == 'blocked' %} bad{% endif %}">
+        {%- if advice.state == 'running' %}{{ t.state_running }}
+        {%- elif advice.state == 'blocked' %}{{ t.state_blocked }}
+        {%- elif advice.state == 'never' %}{{ t.state_first }}
+        {%- elif advice.state == 'waiting' %}{{ t.state_waiting }}
+        {%- else %}{{ t.state_due }}{% endif %}
+      </p>
+      <p class="advice__why">
+        {%- if advice.state == 'running' %}{{ t.why_running }}
+        {%- elif advice.state == 'blocked' %}{{ t.why_blocked }}
+        {%- elif advice.state == 'never' %}{{ t.why_first }}
+        {%- elif advice.state == 'waiting' %}{{ t.why_waiting }}
+        {%- else %}{{ t.why_due.format(since=advice.since, n=advice.interval_hours) }}{% endif %}
+      </p>
+    </div>
+
+    {% include "_run_action.html" %}
+
+    {# Three facts in the shape the spend below already uses: a label, a figure,
+       and the one line of detail that makes the figure mean something. #}
+    <div class="advice__facts">
+      <div>
+        <p class="unit__h">{{ t.last_run }}</p>
+        <p class="advice__n num">{{ advice.last.started_at|stamp if advice.last else "—" }}</p>
+        <p class="advice__s{% if advice.last and advice.last.status == 'error' %} bad{% endif %}">
+          {{ t['status_' + advice.last.status] if advice.last else t.no_runs_yet }}
+        </p>
+      </div>
+      <div>
+        <p class="unit__h">{{ t.fact_collect }}</p>
+        <p class="advice__n num">{{ advice.last_collect_at|stamp }}</p>
+        <p class="advice__s">{{ t.sources_ok.format(n=rail.counts.sources) }}</p>
+      </div>
+      <div>
+        <p class="unit__h">{{ t.fact_due }}</p>
+        {% include "_countdown.html" %}
+        <p class="advice__s">{{ advice.due_at|stamp if advice.due_at else t.advice_never }}</p>
+      </div>
+    </div>
+  </section>
+
+  {# This is where the execution numbers live - cost, duration, token counts by
+     way of them, and the spend totals with them. They are the machine reporting
+     on itself, and this is the page for that: on the top bar of every page, or
+     in a column beside the reading, they report on the machine to someone who
+     opened the app to read the news. #}
+  <section class="totals">
+    <div>
+      <p class="unit__h">{{ t.cost_today }}</p>
+      <p class="totals__n num">{{ activity.cost_today|money }}</p>
+    </div>
+    <div>
+      <p class="unit__h">{{ t.cost_week }}</p>
+      <p class="totals__n num">{{ activity.cost_week|money }}</p>
+    </div>
+    <div>
+      <p class="unit__h">{{ t.cost_month }}</p>
+      <p class="totals__n num">{{ activity.cost_month|money }}</p>
+    </div>
+    {# The one evaluation number the interface can move, and the only one it
+       ever could: a label exists because a person read a story and pressed a
+       word. It is here and not on the digest because ADR 0013 keeps the
+       reading page for the reading - and it states a count and stops. No
+       target or bar: this count simply says how many summaries have a reader's
+       wrong-only label, and links to the examples behind it. #}
+    <div>
+      <p class="unit__h">{{ t.verdicts_labelled }}</p>
+      {# And, since the notes had nowhere to be read, the way into them. The
+         figure is the link because the figure is what the page behind it is
+         made of; no extra word, and no colour - the affordance is the
+         underline under the pointer, the bargain the run log's time cell
+         already makes. #}
+      <p class="totals__n num"><a href="/runs/verdicts?lang={{ language }}">{{ verdicts.labelled }}<small> / {{ verdicts.total }}</small></a></p>
+    </div>
+  </section>
+
+  {# The week, one bar a day. It is here rather than beside the reading (ADR
+     0024) because what it reports - how much came in on each of the last seven
+     days - is the run log's own subject read at a different grain, and it is
+     the only figure on the page that is a shape rather than a number. It is labelled for what it
+     counts, not for how long it counts: `7 gün` is already three inches to the
+     left of it, spending money. #}
+  {% if activity.days %}
+  <section class="week">
+    <p class="unit__h">{{ t.week_stories }}</p>
+    {% set tallest = activity.days|map(attribute='n')|max %}
+    <ul class="chart">
+      {% for day in activity.days %}
+      <li{% if day.today %} class="on"{% endif %} title="{{ t.day_stories.format(d=day.label, n=day.n) }}">
+        <span class="chart__t"><span class="chart__b" style="height: {{ (100 * day.n / tallest)|round|int if tallest else 0 }}%"></span></span>
+        <span class="chart__d">{{ day.label }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <div class="scroll">{% include "_runs_table.html" %}</div>
+    {% with page = runs %}{% include "_more.html" %}{% endwith %}
+  </section>
+
+  {% if failures %}
+  <section class="panel">
+    <div class="ph"><h2>{{ t.status_error }}</h2></div>
+    <ul class="pb fails">
+      {# A partial run's text is here too - the dead feed is worth reading -
+         but only a failed run's time takes the alarm colour, for the reason
+         `_runs_table.html` gives. #}
+      {% for r in failures %}
+      <li class="raw"><span{% if r.status == 'error' %} class="bad"{% endif %}>{{ r.started_at|clock }}</span> {{ r.error }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+{% endblock %}

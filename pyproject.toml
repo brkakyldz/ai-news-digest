@@ -1,0 +1,92 @@
+[project]
+name = "ainews"
+version = "0.1.0"
+description = "Local-first LangGraph pipeline that collects, dedupes, summarises and ranks the day's AI news into one bilingual daily bulletin."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=2.0",
+    # Upper bounds on the two that own the structured-output contract, because
+    # `>=0.3` on a library now at 1.6 is not a pin. The pipeline reads three
+    # keys off `with_structured_output(..., include_raw=True)`; the mechanism
+    # behind them has already moved once under that floor - from function
+    # calling to `response_format: json_schema` - and a move back would make
+    # every branch of the fan-out return nothing, silently, after the calls were
+    # paid for. `tests/test_model_contract.py` is what notices; this is what
+    # stops it happening on an unrelated `uv sync`.
+    "langchain-core>=1.6,<2",
+    "langchain-openai>=1.6,<2",
+    "langchain-tavily>=0.2",
+    "feedparser>=6.0.11",
+    "trafilatura>=2.0",
+    "url-normalize>=2.2",
+    "rapidfuzz>=3.10",
+    "httpx>=0.28",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "jinja2>=3.1",
+    "sqlalchemy>=2.0.36",
+    "aiosqlite>=0.20",
+    "apscheduler>=3.11,<4",
+    "pydantic-settings>=2.7",
+    "pyyaml>=6.0",
+    "python-multipart>=0.0.20",
+    "alembic>=1.19.2",
+]
+
+[project.scripts]
+ainews = "ainews.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+    "pre-commit>=4.0",
+    "respx>=0.22",
+    "httpx>=0.28",
+    # The Stop-gate runs this suite on every code-changing turn: 91s serial,
+    # 31s with `-n auto` for the same tests (measured 2026-09-14). A gate that
+    # costs a minute and a half per turn is a gate that gets switched off.
+    "pytest-xdist>=3.6",
+]
+# Screenshots only. Kept out of `dev` so a clone that just wants to run the
+# tests does not download a browser.
+docs = ["playwright>=1.62"]
+obs = [
+    "arize-phoenix-otel>=0.6",
+    "openinference-instrumentation-langchain>=0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ainews"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# Ruff now formats fenced code in markdown; PLAN.md and the ADRs are documents
+# of record and their snippets are illustrative, not compiled.
+extend-exclude = ["*.md", "mockups", "reports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = [
+    "B008",    # FastAPI Depends() in a default argument is the framework's idiom.
+    "RUF001",  # This project writes Turkish; 'ı' and '–' are content, not typos.
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `.` as well as `src`: the tests import their own helpers as `tests.factories`,
+# which reads unambiguously and, unlike a bare `factories`, cannot collide with
+# an installed package. `python -m pytest` puts the cwd on the path and a bare
+# `pytest` does not, so it is stated here rather than left to the invocation.
+pythonpath = ["src", "."]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]

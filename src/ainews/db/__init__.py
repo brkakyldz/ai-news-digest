@@ -1,0 +1,53 @@
+"""Persistence layer: models, engine/session wiring and schema creation."""
+
+from ainews.db.models import (
+    VERDICT_REASONS,
+    Article,
+    Base,
+    Bulletin,
+    BulletinItem,
+    DailyCounter,
+    EvalResult,
+    Run,
+    RunStep,
+    Source,
+    Summary,
+    SummaryTranslation,
+    Verdict,
+    VerdictReason,
+    bulletin_runs,
+)
+from ainews.db.schema import init_db
+from ainews.db.session import (
+    create_engine,
+    db_session,
+    dispose_engine,
+    get_engine,
+    get_sessionmaker,
+    session_scope,
+)
+
+__all__ = [
+    "VERDICT_REASONS",
+    "Article",
+    "Base",
+    "Bulletin",
+    "BulletinItem",
+    "DailyCounter",
+    "EvalResult",
+    "Run",
+    "RunStep",
+    "Source",
+    "Summary",
+    "SummaryTranslation",
+    "Verdict",
+    "VerdictReason",
+    "bulletin_runs",
+    "create_engine",
+    "db_session",
+    "dispose_engine",
+    "get_engine",
+    "get_sessionmaker",
+    "init_db",
+    "session_scope",
+]

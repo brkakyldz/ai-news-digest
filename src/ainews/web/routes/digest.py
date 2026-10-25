@@ -1,0 +1,265 @@
+"""The digest page, the archive and search.
+
+Three routes because they are three URLs a person types or bookmarks, but one
+template family: they all render the same story list, read at different times.
+"""
+
+from __future__ import annotations
+
+from urllib.parse import quote_plus
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ainews.db import VERDICT_REASONS, Bulletin, Summary, Verdict, db_session
+from ainews.db.models import utcnow
+from ainews.web import queries
+from ainews.web.format import impact_split
+from ainews.web.i18n import strings
+from ainews.web.views import (
+    get_templates,
+    language_of,
+    project_editor_note,
+    remember_preferences,
+    shell_context,
+)
+
+router = APIRouter()
+
+
+@router.get("/", response_class=HTMLResponse)
+async def index(
+    request: Request,
+    all: bool = Query(False, description="show everything summarised, not just the bulletin"),
+    tag: str | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> HTMLResponse:
+    language = language_of(request)
+    # Not filtered by `language`: the shell's switch translates the interface,
+    # it does not choose which bulletin exists (ADR 0017).
+    bulletin = await queries.latest_bulletin(session)
+
+    context = await shell_context(request, session, language, page="digest", bulletin=bulletin)
+    editor_note, editor_note_language = project_editor_note(bulletin, language)
+    context.update(
+        {
+            "bulletin": bulletin,
+            "editor_note": editor_note,
+            "editor_note_language": editor_note_language,
+            "stories": [],
+            "others": [],
+            "n_others": 0,
+            "tags": [],
+            "n_topics": 0,
+            "split": [],
+            "tag": tag,
+            "show_all": all,
+        }
+    )
+
+    if bulletin is not None:
+        stories = await queries.stories_for_bulletin(session, bulletin, language=language, tag=tag)
+        # Appended, not merged. The bulletin's stories carry a tier and these do
+        # not, so keeping them in their own block is what stops an absolute
+        # score and a relative one being compared by eye (ADR 0030).
+        others = (
+            await queries.other_stories(session, bulletin, language=language, tag=tag)
+            if all
+            else []
+        )
+        context["stories"] = stories
+        context["others"] = others
+        # Only offer the expander when there is something behind it.
+        context["n_others"] = 0 if all else await queries.count_others(session, bulletin)
+        # Every count on this page is a count of the list the reader can reach.
+        # `all=1` widens the list, so it widens the counts with it - a filter
+        # pill promising 27 stories on a page that holds fifteen, and returning
+        # four when pressed, was three numbers disagreeing about one day.
+        #
+        # One pass over the day's rows, both scopes counted. The filter row
+        # follows the list on screen, so it draws twelve of whichever scope is
+        # showing and the disclosure the rest.
+        topics = await queries.tag_counts(session, bulletin, include_all=all)
+        context["tags"] = topics.shown(not all)[:12]
+        # The brief's footnote does not follow it. That line is the size of the
+        # *bulletin* - the same eleven stories the rail badge counts - so opening
+        # `?all=1` must not leave "11 haber" beside a topic count taken over
+        # ninety-one. Nor `tags|length`, which is the row's twelve-item cap
+        # reporting itself as a measurement.
+        context["n_topics"] = len(topics.published)
+        # How heavy the day in view is, drawn at the end of the topic row. It is
+        # counted off the list already in `context` rather than off the run, so
+        # the filtered page answers for its filter. It is the only thing the
+        # right rail's themes list is missed for: that list drew a name, a share
+        # and a count per topic, which is the filter row three lines above it
+        # written a second time (ADR 0024).
+        context["split"] = impact_split(stories + others)
+
+    response = get_templates(request).TemplateResponse(request, "index.html", context)
+    remember_preferences(request, response, language)
+    return response
+
+
+@router.get("/archive", response_class=HTMLResponse)
+async def archive(
+    request: Request,
+    b: int | None = Query(None, description="which bulletin to open"),
+    all: bool = Query(False, description="show everything summarised, not just the bulletin"),
+    limit: int | None = Query(None, description="how many bulletins to list"),
+    session: AsyncSession = Depends(db_session),
+) -> HTMLResponse:
+    """One past bulletin, and the list of the others.
+
+    `all=1` is the digest's own flag, taken here for one caller: `/runs/verdicts`
+    links a labelled story by its anchor, and a verdict can be given on a story
+    the editor left out - the digest offers the two words on every rendered
+    item, published or not. Without the flag that link lands on a page the story
+    is not on, which is a dead anchor rather than a visible error.
+    """
+    language = language_of(request)
+    listed = await queries.bulletins_page(session, limit=queries.page_limit(limit, 30))
+    selected: Bulletin | None = None
+    if listed:
+        # A bulletin named in the URL but past the window is still fetched by id:
+        # a link into the archive must not depend on how far the list was opened.
+        selected = next((row for row in listed if row.id == b), None)
+        if selected is None:
+            selected = (await queries.bulletin_by_id(session, b) if b else None) or listed.rows[0]
+
+    context = await shell_context(request, session, language, page="archive", bulletin=selected)
+    editor_note, editor_note_language = project_editor_note(selected, language)
+    context.update(
+        {
+            "bulletins": listed,
+            "more_url": f"/archive?lang={language}"
+            + (f"&b={selected.id}" if selected else "")
+            + "&limit=",
+            "selected": selected,
+            "editor_note": editor_note,
+            "editor_note_language": editor_note_language,
+            # The version that replaced this one, so a reader who followed a link
+            # to a superseded page is told rather than left to work it out.
+            "superseded_by": (await queries.newer_version(session, selected) if selected else None),
+            "stories": (
+                await queries.stories_for_bulletin(session, selected, language=language)
+                if selected
+                else []
+            ),
+            "others": (
+                await queries.other_stories(session, selected, language=language)
+                if selected and all
+                else []
+            ),
+        }
+    )
+    response = get_templates(request).TemplateResponse(request, "archive.html", context)
+    remember_preferences(request, response, language)
+    return response
+
+
+@router.get("/search", response_class=HTMLResponse)
+async def search(
+    request: Request,
+    q: str = "",
+    limit: int | None = Query(None, description="how many hits to draw; the rest are behind it"),
+    session: AsyncSession = Depends(db_session),
+) -> HTMLResponse:
+    language = language_of(request)
+    window = queries.page_limit(limit, 60)
+    hits = (
+        await queries.search_stories(session, q, language, limit=window)
+        if q.strip()
+        else queries.Page(rows=[], total=0, limit=window)
+    )
+    context = await shell_context(request, session, language, page="search")
+    context.update(
+        {
+            "query": q,
+            "stories": hits,
+            "more_url": f"/search?lang={language}&q={quote_plus(q)}&limit=",
+        }
+    )
+    response = get_templates(request).TemplateResponse(request, "search.html", context)
+    remember_preferences(request, response, language)
+    return response
+
+
+@router.post("/verdict", response_class=HTMLResponse)
+async def post_verdict(
+    request: Request,
+    summary_id: int = Form(...),
+    verdict: str = Form(...),
+    reason: str | None = Form(None),
+    note: str | None = Form(None),
+    frag: str | None = Form(None),
+    session: AsyncSession = Depends(db_session),
+) -> HTMLResponse:
+    """The reader's call on one summary (PLAN-EVALS E2.3).
+
+    Answers with the story's re-rendered foot line, not a redirect: a verdict
+    is given mid-read, and a page reload would throw the reader back to the
+    top of a list they were halfway down. One row per summary - a second
+    verdict overwrites the first - and the note is kept only with "wrong",
+    because "right, and here is why" is not a thing a reader writes.
+
+    `frag=words` answers with the two words alone. That is what the findings
+    table on `/runs/verdicts` swaps: the control sits in a table cell there,
+    and a story foot - chips, source link, note line - swapped into a cell
+    would be a story card inside a table.
+    """
+    language = language_of(request)
+    if verdict != "wrong":
+        raise HTTPException(status_code=422, detail="verdict is 'wrong'")
+    if reason is not None and reason not in VERDICT_REASONS:
+        raise HTTPException(status_code=422, detail=f"reason is one of {VERDICT_REASONS}")
+    if await session.get(Summary, summary_id) is None:
+        raise HTTPException(status_code=404, detail="no such summary")
+
+    row = (
+        await session.execute(select(Verdict).where(Verdict.summary_id == summary_id))
+    ).scalar_one_or_none()
+    # Three cases, not two. "right" drops the note, because "right, and here is
+    # why" is not a thing a reader writes. A submitted note - even an empty one -
+    # is what the reader now wants. But the two words post no `note` field at
+    # all, so a reader pressing "wrong" a second time on a story they have
+    # already explained used to silently erase the explanation, which is the one
+    # row E5 rewrites the judge prompt from.
+    if verdict != "wrong":
+        cleaned = None
+        chosen = None
+    else:
+        cleaned = (row.note if row is not None else None) if note is None else note.strip() or None
+        # The same rule for the reason: the two words post no `reason` field,
+        # so a reader pressing "wrong" again on a story they have already
+        # classified keeps the classification.
+        chosen = (row.reason if row is not None else None) if reason is None else reason
+    if row is None:
+        session.add(Verdict(summary_id=summary_id, verdict=verdict, reason=chosen, note=cleaned))
+    else:
+        row.verdict = verdict
+        row.reason = chosen
+        row.note = cleaned
+        row.created_at = utcnow()
+    await session.commit()
+
+    story = await queries.story_for_summary(session, summary_id, language)
+    if frag == "words":
+        return get_templates(request).TemplateResponse(
+            request,
+            "_verdict_words.html",
+            {
+                "sid": summary_id,
+                "verdict": story.verdict if story else None,
+                "language": language,
+                "t": strings(language),
+                "target": f"#vd-{summary_id}",
+                "frag": "words",
+            },
+        )
+    return get_templates(request).TemplateResponse(
+        request,
+        "_story_foot.html",
+        {"story": story, "language": language, "t": strings(language), "saved": True},
+    )

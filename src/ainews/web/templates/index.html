@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {% if not bulletin %}
+    <div class="panel"><p class="empty">{{ t.empty_digest }}</p></div>
+  {% else %}
+
+  {# The day's brief, above the reading. It sat in the right rail until that
+     rail came off; of the five things in the column it is the only one a
+     person wrote, so it is the only one that came out of it whole. It reads before the topics and the topics read before
+     the stories: what happened, what it was about, what it was. #}
+  {% if editor_note %}
+  <section class="brief">
+    <div class="brief__b">
+      <p class="brief__l">{{ t.brief_label }}{% if editor_note_language and editor_note_language != language %} · <span class="hint" lang="{{ editor_note_language }}">{{ t['lang_' ~ editor_note_language] }}</span>{% endif %}</p>
+      <div class="brief__t" lang="{{ editor_note_language or language }}">{% for para in editor_note|paragraphs %}<p>{{ para }}</p>{% endfor %}</div>
+    </div>
+    <p class="brief__m brief__c">{{ t.brief_meta.format(n=header.n_stories, s=header.n_sources, g=n_topics) }}</p>
+  </section>
+  {% endif %}
+
+  <section class="feed-col">
+    {% if tags or split %}
+    {# Six topics, then the rest behind a disclosure. Every tag the day
+       produced used to be laid out at once - thirteen of them, which is not a
+       filter but a second list to read before the list. #}
+    {# The disclosure is inside the row, as its last pill, and not a control
+       beside it: as a sibling of the pills it landed on a flex line of its
+       own the moment the row wrapped, which put it alone on a third line
+       with the width of the panel to its left. A `<div>` rather than a `<p>`
+       because `<details>` is flow content and cannot live in a paragraph. #}
+    <div class="filter">
+      {% if tags %}
+      <div class="tags">
+        <a href="/?lang={{ language }}{% if show_all %}&amp;all=1{% endif %}"
+           {% if not tag %}aria-current="true"{% endif %}>{{ t.all_tags }}</a>
+        {% for name, count in tags[:6] %}
+        <a href="/?lang={{ language }}&amp;tag={{ name }}{% if show_all %}&amp;all=1{% endif %}"
+           {% if tag == name %}aria-current="true"{% endif %}>{{ name }} <b>{{ count }}</b></a>
+        {% endfor %}
+        {% if tags|length > 6 %}
+        <details class="tag-more"{% if tag and tag not in tags[:6]|map(attribute=0)|list %} open{% endif %}>
+          <summary>{{ t.more_topics }}</summary>
+          <div class="tags">
+            {% for name, count in tags[6:] %}
+            <a href="/?lang={{ language }}&amp;tag={{ name }}{% if show_all %}&amp;all=1{% endif %}"
+               {% if tag == name %}aria-current="true"{% endif %}>{{ name }} <b>{{ count }}</b></a>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if split %}
+      {# How heavy the list in view is, at the end of the row that says what it
+         is about. It uses the story list's meter at the story list's colours,
+         so the three items here and the bars down the page are one system read
+         twice - and it is counted off the same list, so the filtered page
+         answers for its filter. #}
+      <ul class="spread" aria-label="{{ t.impact_spread }}">
+        {% for band, n in split %}
+        {% set lit = {'high': 3, 'mid': 2, 'low': 1}[band] %}
+        <li class="score--{{ band }}{{ ' is-off' if not n }}">
+          <span class="bars" aria-hidden="true">{% for i in range(1, 4) %}<i class="{{ 'f' if i <= lit }}"></i>{% endfor %}</span>
+          <span class="spread__l">{{ t['impact_' + band] }}</span>
+          <span class="spread__n">{{ n }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% include "_stories.html" %}
+
+    {% if others %}
+    {# The day's other summaries, under the bulletin and not merged into it.
+       These carry no tier, so they draw at the summariser's own score; a
+       heading between the two lists is what says the scales are different
+       rather than leaving the reader to notice. #}
+    <p class="feed__f"><span class="hint">{{ t.others_label }}</span></p>
+    {% with stories = others %}{% include "_stories.html" %}{% endwith %}
+    {% endif %}
+
+    {% if n_others %}
+    <p class="feed__f">
+      {# The expander is a link, not a toggle: the URL has to survive a reload
+         and be shareable, which a JavaScript-only disclosure would not. #}
+      <a class="lnk" href="/?lang={{ language }}&amp;all=1{% if tag %}&amp;tag={{ tag }}{% endif %}">
+        {{ t.show_others.format(n=n_others) }}
+      </a>
+      <span class="hint">{{ t.all_summarised }}</span>
+    </p>
+    {% endif %}
+  </section>
+
+  {% endif %}
+{% endblock %}

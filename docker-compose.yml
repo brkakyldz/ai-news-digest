@@ -1,0 +1,69 @@
+services:
+  app:
+    build: .
+    image: ai-news-digest:latest
+    container_name: ainews
+    restart: unless-stopped
+    # Secrets come from the local dotenv file; copy the template first.
+    env_file:
+      - .env
+    environment:
+      # Inside the container the database always lives on the mounted volume,
+      # whatever the host environment file says.
+      DATABASE_URL: sqlite+aiosqlite:///./data/app.db
+      # Tracing is off unless the host environment says otherwise, and the
+      # endpoint is the service name rather than localhost - the app's view of
+      # Phoenix is not the browser's. No `depends_on`: phoenix lives in a
+      # profile, and a dependency on a service that is not started is an error.
+      PHOENIX_ENABLED: ${PHOENIX_ENABLED:-false}
+      PHOENIX_ENDPOINT: http://phoenix:6006/v1/traces
+      # The one place 0.0.0.0 is right: a process bound to loopback inside its
+      # own network namespace is not reachable from the host at all. Published
+      # to 127.0.0.1 below, so the container's every-interface bind ends at the
+      # container. The image's CMD passes --host explicitly; this is for anyone
+      # who runs `ainews serve` inside it.
+      HOST: 0.0.0.0
+    ports:
+      # Bound to the loopback interface, not published to every interface on the
+      # host. There is no auth on this dashboard (README, "Known limits"), so
+      # `"8000:8000"` would have put the day's bulletin and the run button on
+      # every device sharing the network.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # A named volume, not a bind mount to ./data. WAL needs a shared-memory
+      # file beside the database, and a Windows host directory mounted into a
+      # Linux container cannot provide one: `PRAGMA journal_mode=WAL` fails with
+      # "disk I/O error" and the app never starts. ADR 0007.
+      # To read the database from the host: docker cp ainews:/app/data/app.db .
+      - ainews-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Development instrument, not part of the product (ADR 0018). It starts only
+  # under `--profile dev`, so a plain `docker compose up` is still one container.
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: ainews-phoenix
+    profiles: ["dev"]
+    restart: unless-stopped
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    ports:
+      # 6006 serves both the UI and the OTLP/HTTP endpoint the app posts to.
+      # Loopback for the same reason the app is: traces carry the exact prompts
+      # and the raw model responses, which is the last thing to hand the network.
+      - "127.0.0.1:6006:6006"
+    volumes:
+      - phoenix-data:/mnt/data
+
+volumes:
+  ainews-data:
+  phoenix-data:

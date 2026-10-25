@@ -1,0 +1,106 @@
+{# The press, and the question in front of it.
+
+   Two states of one fragment, swapped by two GET routes that render this file.
+   The button no longer starts a run: it asks one. `evet` is the only thing in
+   the app that spends money, and it is now two deliberate clicks away from
+   idle, which is what a control with a price on it should cost.
+
+   The question is not "are you sure", and it does not repeat the state line
+   above it - a reader who got this far has read that. It is the two facts that
+   line cannot carry and nobody recalls on demand: what this press will actually
+   do, and what the last one cost. Before the first run there is no measured
+   cost, so the second line is simply absent rather than estimated. #}
+<div id="run-action" class="act">
+  {% if asking %}
+  <p class="act__q">{{ t.confirm_what.format(n=n_sources) }}</p>
+  {# What is waiting to be summarised, counted the way the dedupe node will
+     count it. A press is a delta, so the question has to say how big the delta
+     is: without the count, a second press ten minutes after the first pays for
+     a bulletin of two stories and then puts it on the front page. The count is
+     "waiting" rather than "will be" because the poll that opens a run can add
+     to it and dedupe can take from it; with nothing waiting the sentence says
+     what the press would then produce, and still lets it be pressed. #}
+  <p class="act__c">
+    {%- if n_candidates %}{{ t.confirm_waiting.format(c=n_candidates) }}
+    {%- else %}{{ t.confirm_none }}{% endif -%}
+  </p>
+  {%- if last_cost %}
+  <p class="act__c">{{ t.confirm_cost.format(c=last_cost|money) }}</p>
+  {%- endif %}
+  <p class="act__c">{{ t['lang_en'] }} + {{ t['lang_tr'] }}</p>
+
+
+  {# The two model choices the press carries, in one grid so their labels share a
+     column and their controls start on one edge. They were three separate rows
+     first and the ragged left edge of the tracks read as three unrelated
+     controls rather than one question with three parts.
+
+     The two model rows are the same kind of question and the one carrying a
+     ten- to fifty-fold price (ADR 0020). Two rows and not one: the summariser
+     is the ninety-odd calls and the language risk, the ranker is a single call
+     over the whole day, and ADR 0001 split the two knobs precisely so they
+     could move apart. Slots run cheapest-first, so the default sits on the left
+     and an expensive tier is a reach to the right rather than a neighbour.
+
+     Every slot is an `hx-get` of this same fragment with one model parameter
+     changed and the other carried through, so choosing costs no JavaScript or
+     client state. #}
+  <div class="act__ch">
+    <span class="act__lb">{{ t.model_summarize }}</span>
+    <div class="seg seg--model" role="group" aria-label="{{ t.model_summarize }}">
+      {%- for m in models %}
+      <button type="button" title="{{ m.id }}"
+              {% if ms == m.id %}aria-current="true"{% endif %}
+              hx-get="/runs/confirm?lang={{ language }}&amp;ms={{ m.id }}&amp;mr={{ mr }}"
+              hx-target="#run-action" hx-swap="outerHTML">{{ m.short }}</button>
+      {%- endfor %}
+    </div>
+
+    <span class="act__lb">{{ t.model_rank }}</span>
+    <div class="seg seg--model" role="group" aria-label="{{ t.model_rank }}">
+      {%- for m in models %}
+      <button type="button" title="{{ m.id }}"
+              {% if mr == m.id %}aria-current="true"{% endif %}
+              hx-get="/runs/confirm?lang={{ language }}&amp;ms={{ ms }}&amp;mr={{ m.id }}"
+              hx-target="#run-action" hx-swap="outerHTML">{{ m.short }}</button>
+      {%- endfor %}
+    </div>
+  </div>
+
+  {# The prices, in the same figure face as the last run's cost directly above,
+     because they are the two halves of one judgement: what it cost, and what
+     the tier now selected is priced at. No projected total is drawn from them -
+     the run row keeps one token count, not a per-node split, so the product
+     would be a number with a decimal point and no basis. #}
+  <p class="act__c act__m">{{ t.model_price.format(si=ms_price.price_in, so=ms_price.price_out, ri=mr_price.price_in, ro=mr_price.price_out) }}</p>
+
+  <div class="act__r">
+    {# The one press that costs money. It answers into the bar's status readout,
+       then fetches this fragment back to rest - where it renders disabled,
+       because by then the claim is taken. Two requests rather than one reply
+       carrying both, so `/runs/start` stays the short path a second press
+       races against. #}
+    <button class="btn btn--pri"
+            hx-post="/runs/start?lang={{ language }}&amp;ms={{ ms }}&amp;mr={{ mr }}"
+            hx-target="#run-status" hx-swap="innerHTML"
+            hx-disabled-elt="this"
+            hx-on::before-request="document.getElementById('bar').classList.add('is-running')"
+            hx-on::after-request="htmx.ajax('GET', '/runs/action?lang={{ language }}', {target: '#run-action', swap: 'outerHTML'})">
+      {{ t.confirm_yes }}
+    </button>
+    <button class="btn"
+            hx-get="/runs/action?lang={{ language }}"
+            hx-target="#run-action" hx-swap="outerHTML">
+      {{ t.confirm_no }}
+    </button>
+  </div>
+  {% else %}
+  <button class="btn btn--pri act__go"
+          {% if not advice.ready %}disabled{% endif %}
+          hx-get="/runs/confirm?lang={{ language }}"
+          hx-target="#run-action" hx-swap="outerHTML">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
+    <span>{{ t.run_start }}</span>
+  </button>
+  {% endif %}
+</div>

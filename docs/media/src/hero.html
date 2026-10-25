@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI News Digest — the app</title>
+<link rel="stylesheet" href="glass.css">
+<style>
+  :root { --w: 1280px; --h: 830px; }
+
+  .card { left: 40px; top: 24px; width: 1200px; height: 782px; padding: 16px; }
+
+  /* The app is captured at 1320 × 780 CSS px and drawn at 1168 wide. */
+  .screen {
+    position: relative; width: 1168px; height: 690px;
+    border-radius: 22px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 14px 30px rgba(8, 20, 40, 0.35);
+  }
+  .screen img { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .caption {
+    position: absolute; right: 22px; bottom: 22px;
+    height: 58px; padding: 0 28px; display: flex; align-items: center;
+    font-size: 25px; font-weight: 500; color: #fff;
+    background: rgba(28, 40, 58, 0.62);
+    border: 1.5px solid rgba(255, 255, 255, 0.45);
+    border-radius: 999px;
+    backdrop-filter: blur(14px) saturate(1.3);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 10px 24px rgba(0, 0, 0, 0.3);
+  }
+
+  .cursor { position: absolute; width: 30px; height: 30px; margin: -3px 0 0 -5px; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45)); }
+  .ripple { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.9); opacity: 0; }
+
+  .foot { display: flex; align-items: center; gap: 18px; height: 60px; padding: 8px 10px 0 18px; font-size: 25px; }
+  .foot .soft { color: var(--ink-soft); }
+  .foot b { font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="sea"></div>
+
+<div class="glass card">
+  <div class="screen" id="screen">
+    <img id="a" alt=""><img id="b" alt="">
+    <div class="ripple" id="ripple"></div>
+    <svg class="cursor" id="cursor" viewBox="0 0 24 24"><path d="M4 2.5l15 9.2-6.6 1.4 3.8 7.2-2.8 1.4-3.7-7.2L4.8 19z" fill="#fff" stroke="#111" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    <div class="caption" id="caption"></div>
+  </div>
+  <div class="foot">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M5 4a15 15 0 0 1 15 15"/><path d="M5 10.5a8.5 8.5 0 0 1 8.5 8.5"/><circle cx="6" cy="18" r="1.6" fill="#fff"/></svg>
+    <div><b>AI News Digest</b> <span class="soft">· 16 feeds in, one ranked bulletin out · English and Turkish</span></div>
+  </div>
+</div>
+
+<script>
+const SCALE = 1168 / 1320;
+const a = document.getElementById("a"), b = document.getElementById("b");
+
+async function load(img, src) {
+  if (!src) { img.removeAttribute("src"); return; }
+  if (img.dataset.src === src) return;
+  img.src = src; img.dataset.src = src;
+  await img.decode();
+}
+
+// One frame of the storyboard scripts/readme_media.py wrote: the app frame,
+// the one it is fading from, the cursor in the app's own CSS pixels, and the
+// caption for the scene.
+window.setFrame = async function (f) {
+  await load(a, f.prev || f.img);
+  await load(b, f.img);
+  a.style.opacity = 1;
+  b.style.opacity = f.prev ? f.alpha : 1;
+  const cur = document.getElementById("cursor");
+  cur.style.display = f.cursor ? "block" : "none";
+  if (f.cursor) {
+    cur.style.left = `${f.cursor[0] * SCALE}px`;
+    cur.style.top = `${f.cursor[1] * SCALE}px`;
+    cur.style.transform = f.down ? "scale(0.86)" : "";
+  }
+  const rip = document.getElementById("ripple");
+  rip.style.opacity = f.ripple ? 1 - f.ripple : 0;
+  if (f.cursor) {
+    rip.style.left = `${f.cursor[0] * SCALE}px`;
+    rip.style.top = `${f.cursor[1] * SCALE}px`;
+    rip.style.transform = `scale(${0.4 + (f.ripple || 0) * 1.2})`;
+  }
+  const cap = document.getElementById("caption");
+  cap.textContent = f.caption || "";
+  cap.style.opacity = f.caption ? (f.captionAlpha ?? 1) : 0;
+};
+</script>
+</body>
+</html>

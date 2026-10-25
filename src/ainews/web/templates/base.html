@@ -1,0 +1,331 @@
+{# The shell every page wears: one bar across the top, a navigation rail
+   hanging under its left end, and the reading beside it.
+
+   The bar spans the window, and its first and last cells are exactly the widths
+   of the two columns beneath them, on the same ground - so each rail is one
+   surface from the top of the window to the bottom, and the bar is the head of
+   both rather than a strip laid over them (ADR 0021). A bar that starts where
+   the left rail stops makes the window's top edge two bands that happen to be
+   the same height: the brand in the rail's own scroll box, the bar's hairline
+   beginning 264px in, and the reader's controls a strip belonging to the
+   content column rather than to the application.
+
+   There is no third column (ADR 0024). A right rail on the digest holding the
+   day's brief, its themes, the impact spread, the week and one status line came
+   off: the brief is at the top of the reading, the spread is at the end of the
+   topic row, the week is on `/runs`, and the themes and the status line are
+   gone - the first was the topic row written a second time three lines below
+   it, the second was the run log's first sentence and the left rail's foot
+   written a third. The bar's last cell is the width of the switches it holds
+   and nothing follows it down.
+
+   The left rail is navigation and nothing else. It is grouped rather than flat,
+   because five
+   links in one column read as five errands; three labelled groups say what kind
+   of errand each one is - what today holds, where to go looking, and what the
+   machine has already done. The icons are drawn beside the words, never instead
+   of them: an icon alone has to be learned, and this page is opened once a day.
+   Collapsed, the words go and the icons stay - which is the one state where an
+   icon has to stand alone, so every link keeps a `title` for the hover and its
+   label in the accessibility tree.
+
+   The rail's foot holds the way in to the run log, drawn in the accent because
+   it is the only page in the rail the reader opens in order to do something,
+   and when that is worth doing underneath it.
+
+   The bar is four cells and it is laid out as four: the brand over the left
+   rail, what page this is and when its bulletin was made, the search box, and
+   at the end the two switches with the status of a run in flight. Both switches
+   together, because they are the same kind of control - a thing you set once -
+   and at opposite corners of the window they read as two unrelated ones. The
+   run button is not among them; it is on `/runs` alone, because it is the one
+   control in the app that spends money, and here it would be drawn at the size
+   of a preference, in the row of preferences.
+
+   `data-theme` is only written when the reader has actually chosen one:
+   without it `color-scheme: light dark` follows the operating system, which
+   is the honest default and needs no attribute at all. #}
+<!doctype html>
+<html lang="{{ language }}"{% if theme != 'system' %} data-theme="{{ theme }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set titles = {
+  'digest': t.digest_heading, 'search': t.search_heading, 'archive': t.archive_heading,
+  'sources': t.sources_heading, 'runs': t.runs_heading
+} %}
+{# The page first, the application second: five tabs of "AI News Digest" cannot be
+   told apart in a tab strip or a history list, and the page name is the one
+   word that does it. #}
+<title>{% block title %}{{ titles[page] }} · {{ t.title }}{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', path='fonts.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', path='theme.css') }}">
+{# The brand mark, inline, so the tab has an icon without a request and without
+   a network - the same reason the fonts are self-hosted. #}
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%231A5FD6'/%3E%3Cpath d='M6 17v-6M10 17V6M14 17v-5M18 17V8' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+{# The rail's width, applied before the first paint. Every other preference in
+   this app is a cookie the server reads, and this one is not, for the reason
+   the two are different kinds of thing: the theme and the language change what
+   the server renders, and whether the rail shows its words changes nothing but
+   how wide one box is drawn. A cookie would buy a round trip and a re-render
+   for a state the browser can hold on its own. It has to run here, blocking, in
+   the head: set on `load` instead, a reader who collapsed the rail would watch
+   it draw open and snap shut on every page. #}
+<script>
+(function () {
+  try {
+    if (localStorage.getItem('digest_rail') === 'off') {
+      document.documentElement.setAttribute('data-rail', 'off');
+    }
+  } catch (e) { /* private mode: the rail opens, which is the honest default */ }
+})();
+</script>
+<script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
+</head>
+<body>
+
+{# The rail comes before the content in the source order, so a keyboard reaches
+   five links before the first headline every time. One link skips them. #}
+<a class="skip" href="#main">{{ t.skip_to_content }}</a>
+
+{# The runs link is written twice for the reason the theme switch is. Its home is
+   the rail's foot, where it is the way in to the one thing the reader does
+   rather than reads; below 860px the rail is a navigation bar with no foot, so
+   the copy left in the list is the one that gets drawn. #}
+{% macro runs_link(extra='') %}
+<a class="{{ extra }}" href="/runs?lang={{ language }}" title="{{ t.nav_runs }}" {% if page == 'runs' %}aria-current="page"{% endif %}>
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg><span class="nav__l">{{ t.nav_runs }}</span>
+</a>
+{% endmacro %}
+
+{% macro theme_switch(extra='') %}
+<div class="seg seg--theme {{ extra }}" role="group" aria-label="{{ t.theme }}">
+  {% for value in ['system', 'light', 'dark'] %}
+  <a href="{{ theme_urls[value] }}" {% if theme == value %}aria-current="true"{% endif %}>{{ t['theme_' + value] }}</a>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+<div class="app">
+
+  <header class="top-bar" id="bar">
+    {# The bar's first cell, and it is the rail's width on purpose: the brand
+       and the links under it are one column, so the shell has one vertical
+       edge rather than a brand box that ends where the bar's hairline starts. #}
+    <div class="bar__brand">
+      <a class="brand" href="/?lang={{ language }}">
+        <span class="brand__mark">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 18V9M10 18V5M16 18v-6M22 18v-9"/></svg>
+        </span>
+        <span class="brand__w">
+          <span class="brand__t">{{ t.title }}</span>
+          <span class="brand__s">{{ t.tagline }}</span>
+        </span>
+      </a>
+      {# The width of the reading is the rail's to give. It is a button and not
+         a link because it changes nothing the server knows about and produces
+         no history entry the back button should have to walk back through. #}
+      <button type="button" class="rail-tog" id="rail-tog"
+              aria-controls="rail" aria-expanded="true" aria-label="{{ t.rail_toggle }}" title="{{ t.rail_toggle }}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6l-6 6 6 6"/></svg>
+      </button>
+    </div>
+
+    <div class="bar__id">
+      <h1>{{ titles[page] }}</h1>
+      {# The stamp is when *this bulletin* was made, so it is drawn only where
+         the bulletin is. It used to sit beside every page name, and beside
+         "Kaynaklar" or "Çalışmalar" the last digest's time read as that
+         page's time. The archive carries the selected
+         run's own stamp on its brief and its pill, and the run log is a page
+         of stamps. #}
+      {# The bulletin's own language, drawn only when it is not the page's.
+         The switch on the right no longer decides what gets shown (ADR 0017),
+         so a Turkish shell can hold an English digest - which is fine as long
+         as nobody has to work it out from the stories. Same language, no
+         mark. It sits before the stamp because the column is narrower than
+         its contents on a small window, and the stamp is the one of the two
+         that is allowed to go. #}
+      {% if header.bulletin_language %}
+      <span class="bar__lang" lang="{{ header.bulletin_language }}">{{ t['lang_' ~ header.bulletin_language] }}</span>
+      {% endif %}
+      {# Written out - "6 Eylül 2026 · 16:06" - and set in the body face beside
+         a calendar. It was `06 Eyl · 16:06` in the mono face, which is the
+         face ADR 0011 gives to machine output, and read as a log line stuck to
+         the page name: the year was missing, the month was clipped to three
+         letters, and the whole thing was the quietest text in the bar. This is
+         the one date on the page a person would say out loud, so it is spelled
+         the way they would say it. #}
+      {% if page == 'digest' and header.stamp %}
+      <span class="bar__date">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+        {{ header.stamp }}
+      </span>
+      {% endif %}
+    </div>
+
+    <form class="search" action="/search" method="get" role="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="hidden" name="lang" value="{{ language }}">
+      <input id="q" class="field" type="search" name="q" placeholder="{{ t.search_placeholder }}" aria-label="{{ t.search }}">
+      {# The hints are the shortcuts' only documentation, so they are drawn
+         where the shortcuts act and not in a help page nobody opens. Both are
+         real: the script at the foot of this file listens for either. The
+         second one names the modifier the reader's own keyboard has - the
+         script rewrites it away from ⌘ off a Mac. #}
+      <span class="keys" aria-hidden="true"><kbd>/</kbd><kbd id="kbd-k">⌘K</kbd></span>
+    </form>
+
+    <div class="bar__side">
+      <span id="run-status" class="raw" role="status"></span>
+
+      {# Two slots, not one link. A control that draws only the state you are
+         *not* in makes the reader work out which of the two words is the
+         current setting: `english`, alone on a Turkish page, reads as
+         plausibly either - the label of what you would get, or the label of
+         what you have. Both drawn and the current one marked, there is
+         nothing left to work out. Each language is named in itself, so the
+         word a reader is looking for is spelled the way they expect it. #}
+      <div class="seg seg--lang" role="group" aria-label="{{ t.language }}">
+        <a href="{{ language_urls.tr }}" lang="tr" hreflang="tr" {% if language == 'tr' %}aria-current="true"{% endif %}>{{ t.lang_tr }}</a>
+        <a href="{{ language_urls.en }}" lang="en" hreflang="en" {% if language == 'en' %}aria-current="true"{% endif %}>{{ t.lang_en }}</a>
+      </div>
+
+      {# The theme joined it here on 2026-09-07. It sat at the foot of the rail
+         from 2026-09-06 (ADR 0013) on the argument that it is a thing you set
+         once, like the rail's own shape - and that argument put the two
+         switches at opposite corners of the window, one at the top right and
+         one at the bottom left, when they are the same kind of control and are
+         reached in the same breath. They are one group now, at the head of the
+         column they share the ground with. It is also the end of a pattern:
+         the switch used to be written twice and drawn once, because the rail's
+         foot disappears on a phone and the bar had to carry a second copy. One
+         render, every width. #}
+      {{ theme_switch() }}
+    </div>
+    <div class="prog"></div>
+  </header>
+
+  <aside class="rail" id="rail">
+    <nav class="nav" aria-label="{{ t.title }}">
+      <p class="nav__g">{{ t.group_daily }}</p>
+      <a href="/?lang={{ language }}" title="{{ t.nav_digest }}" {% if page == 'digest' %}aria-current="page"{% endif %}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span class="nav__l">{{ t.nav_digest }}</span>
+        {% if rail.counts.digest %}<span class="pill pill--acc">{{ rail.counts.digest }}</span>{% endif %}
+      </a>
+
+      <p class="nav__g">{{ t.group_discover }}</p>
+      <a href="/search?lang={{ language }}" title="{{ t.nav_search }}" {% if page == 'search' %}aria-current="page"{% endif %}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="nav__l">{{ t.nav_search }}</span>
+      </a>
+      <a href="/sources?lang={{ language }}" title="{{ t.nav_sources }}" {% if page == 'sources' %}aria-current="page"{% endif %}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span class="nav__l">{{ t.nav_sources }}</span>
+        {% if rail.counts.sources %}<span class="pill">{{ rail.counts.sources }}</span>{% endif %}
+      </a>
+
+      <p class="nav__g">{{ t.group_record }}</p>
+      <a href="/archive?lang={{ language }}" title="{{ t.nav_archive }}" {% if page == 'archive' %}aria-current="page"{% endif %}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M4 9h16"/></svg><span class="nav__l">{{ t.nav_archive }}</span>
+        {% if rail.counts.archive %}<span class="pill">{{ rail.counts.archive }}</span>{% endif %}
+      </a>
+      {{ runs_link('nav--narrow') }}
+    </nav>
+
+    {# The foot holds the runs link and, under it, when a run is next worth
+       starting. It is a navigation link like the five above and it is drawn
+       unlike them on purpose: it is the only page in the rail the reader opens
+       in order to *do* something rather than to read something, and since
+       2026-09-06 that thing is the one the machine no longer does by itself
+       (ADR 0015). The accent it takes is the accent's existing job - the thing
+       that acts - and not a new colour.
+
+       A button was tried here first and thrown out the same day: three objects
+       stacked in the foot of a quiet rail, a filled accent slab loudest among
+       them. The press belongs on the page that explains it. #}
+    <div class="rail__foot">
+      {% set foot %}
+        {%- if rail.advice.state == 'running' -%}{{ t.running }}
+        {%- elif rail.advice.state == 'blocked' -%}{{ t.state_blocked }}
+        {%- elif rail.advice.state == 'waiting' -%}{{ t.left_in.format(t=rail.advice.gap) }}
+        {%- else -%}{{ t.advice_now }}{%- endif -%}
+      {% endset %}
+      <nav class="nav run-nav" aria-label="{{ t.nav_runs }}">
+        {{ runs_link('nav--go') }}
+        <p class="rail__next">
+          <span>{{ t.next_run }}</span>
+          <span class="raw">{{ foot|trim }}</span>
+        </p>
+      </nav>
+    </div>
+  </aside>
+
+  <div class="col">
+    <main class="main" id="main">
+      {% if demo %}
+      {# The one thing on this application that is not what it looks like.
+         Seeded data drawn as this morning's news would be the single dishonest
+         screen in the project, so the band names the day the run really
+         happened and says the button is dead. On every page, because a reviewer
+         who lands on `/runs` sees a run log and has to be told the runs are a
+         recording too.
+
+         It is a band and not a panel: it belongs to the page rather than to the
+         reading, and it is the same recipe as the stale-bulletin line. #}
+      <p class="demo-band">{{ t.demo_band.format(day=demo) }}</p>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+</div>
+
+{# The only script here that is not htmx, and it does three small things, all of
+   them about the chrome rather than the content.
+
+   The caret: `/` is the habit from every other reading tool, Ctrl/Cmd-K the
+   habit from every other console. Neither fires while something is already
+   being typed into, which is the whole bug with a bare `/` shortcut. #}
+<script>
+document.addEventListener('keydown', function (event) {
+  var slash = event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey;
+  var palette = (event.key === 'k' || event.key === 'K') && (event.metaKey || event.ctrlKey);
+  if (!slash && !palette) return;
+  var active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+  var box = document.getElementById('q');
+  if (!box) return;
+  event.preventDefault();
+  box.focus();
+  box.select();
+});
+
+/* The second hint names the key the reader actually has. ⌘ is drawn in the
+   markup because it is the shorter of the two and a hint that grows on load
+   would reflow the bar; every other platform gets "Ctrl K" written in. */
+(function () {
+  var key = document.getElementById('kbd-k');
+  var mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  if (key && !mac) key.textContent = 'Ctrl K';
+})();
+
+/* The rail's width. The head has already applied the stored state to the
+   document; this syncs the button that reports it and writes the reader's
+   choice back. */
+(function () {
+  var button = document.getElementById('rail-tog');
+  if (!button) return;
+  var root = document.documentElement;
+  var report = function () {
+    button.setAttribute('aria-expanded', root.getAttribute('data-rail') === 'off' ? 'false' : 'true');
+  };
+  report();
+  button.addEventListener('click', function () {
+    var open = root.getAttribute('data-rail') !== 'off';
+    root.setAttribute('data-rail', open ? 'off' : 'on');
+    report();
+    try { localStorage.setItem('digest_rail', open ? 'off' : 'on'); } catch (e) { /* nothing to remember with */ }
+  });
+})();
+</script>
+</body>
+</html>

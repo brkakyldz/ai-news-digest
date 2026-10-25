@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI News Digest — one press</title>
+<link rel="stylesheet" href="glass.css">
+<style>
+  :root { --w: 1280px; --h: 600px; }
+
+  .card { left: 50px; top: 30px; width: 1180px; height: 540px; padding: 34px 36px; }
+
+  .top { display: flex; gap: 18px; align-items: center; }
+  .top .pill { flex: 1; height: 76px; display: flex; align-items: center; gap: 18px; padding: 0 30px; font-size: 25px; }
+  .top .pill svg { flex: none; }
+  .top .pill b { font-weight: 600; }
+  .top .pill span { color: rgba(29, 42, 58, 0.62); }
+  .top .round { width: 76px; height: 76px; flex: none; transform-origin: center; }
+
+  .nodes { display: grid; grid-template-columns: repeat(7, 1fr); gap: 14px; margin-top: 30px; }
+  .node {
+    position: relative;
+    height: 250px;
+    padding: 18px 16px;
+    border-radius: 24px;
+    background: rgba(236, 242, 250, 0.10);
+    border: 1.5px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(14px);
+    display: flex; flex-direction: column;
+  }
+  .node .ix { font-size: 15px; color: var(--ink-faint); letter-spacing: 0.04em; }
+  .node .name { font-size: 27px; font-weight: 600; margin-top: 2px; }
+  .node .desc { font-size: 17px; line-height: 1.22; color: var(--ink-soft); margin-top: 6px; }
+  .node .out { margin-top: auto; }
+  .node .big { font-size: 46px; font-weight: 600; line-height: 1; }
+  .node .lbl { font-size: 16px; color: var(--ink-soft); margin-top: 4px; min-height: 20px; }
+  .node .cost {
+    position: absolute; top: 16px; right: 14px;
+    font-size: 15px; font-weight: 600; color: var(--ink-dark);
+    background: var(--money); border-radius: 999px; padding: 2px 9px;
+  }
+
+  .track { position: relative; height: 34px; margin-top: 4px; }
+  .track .line { position: absolute; left: 70px; right: 70px; top: 16px; height: 2px; background: rgba(255, 255, 255, 0.22); border-radius: 2px; }
+  .track .fill { position: absolute; left: 70px; top: 16px; height: 2px; background: rgba(255, 255, 255, 0.9); border-radius: 2px; }
+  .track .dot {
+    position: absolute; top: 9px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.18), 0 0 24px rgba(255, 255, 255, 0.9);
+  }
+
+  .bottom { display: flex; align-items: center; gap: 26px; margin-top: 6px; padding: 0 8px; }
+  .bottom .lines { font-size: 27px; line-height: 1.32; }
+  .bottom .lines b { font-weight: 700; }
+  .bottom .lines .soft { color: var(--ink-soft); }
+  .bottom .round { width: 68px; height: 68px; margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="sea"></div>
+
+<div class="glass card">
+  <div class="top">
+    <div class="pill">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#1d2a3a" stroke-width="2.2" stroke-linecap="round"><path d="M5 4a15 15 0 0 1 15 15"/><path d="M5 10.5a8.5 8.5 0 0 1 8.5 8.5"/><circle cx="6" cy="18" r="1.6" fill="#1d2a3a"/></svg>
+      <b>16 AI news feeds</b><span>polled every three hours, free · the bulletin waits for one press</span>
+    </div>
+    <div class="round" id="press">
+      <svg width="26" height="26" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="#1d2a3a"/></svg>
+    </div>
+  </div>
+
+  <div class="nodes" id="nodes"></div>
+  <div class="track"><div class="line"></div><div class="fill" id="fill"></div><div class="dot" id="dot"></div></div>
+
+  <div class="bottom" id="bottom">
+    <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M7 8.5h10M7 12h10M7 15.5h6"/></svg>
+    <div class="lines">
+      <div><b class="num" id="stories">11 stories</b> <span class="soft">ranked, in English and Turkish</span></div>
+      <div class="soft"><b class="num" style="color:#fff" id="cost">$0.062</b> · <span class="num" id="took">3 min 05 s</span> · <span class="num">322,715 tokens</span></div>
+    </div>
+    <div class="round" id="done">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#1d2a3a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+    </div>
+  </div>
+</div>
+
+<script>
+// The numbers are one real press, copied from its /runs/<id> page: run
+// 6fd7e741, 2026-10-23, gpt-6-luna on every paid node. They are written in
+// rather than queried because the picture is of that press, not of whatever
+// database renders it.
+const RUN = {
+  nodes: [
+    { name: "collect",   desc: "ETag / 304, so a quiet feed costs nothing", big: 111, lbl: "new of 2,601 seen" },
+    { name: "dedupe",    desc: "canonical URL, then fuzzy title",          big: 110, lbl: "kept" },
+    { name: "enrich",    desc: "feed body → the page → one Tavily search",  big: 109, lbl: "with a body" },
+    { name: "summarize", desc: "one branch per story, validated output",   big: 110, lbl: "summaries", cost: "$0.050" },
+    { name: "rank ×3",   desc: "three shuffled readings, Borda count",     big: 11,  lbl: "chosen", cost: "$0.009" },
+    { name: "translate", desc: "selected prose into Turkish",               big: 11,  lbl: "translated", cost: "$0.002" },
+    { name: "persist",   desc: "one bulletin, free checks on it",          big: 1,   lbl: "bulletin published" },
+  ],
+};
+
+const host = document.getElementById("nodes");
+const els = RUN.nodes.map((n, i) => {
+  const d = document.createElement("div");
+  d.className = "node";
+  d.innerHTML =
+    `<div class="ix">0${i + 1}</div><div class="name">${n.name}</div><div class="desc">${n.desc}</div>` +
+    (n.cost ? `<div class="cost num">${n.cost}</div>` : "") +
+    `<div class="out"><div class="big num">—</div><div class="lbl">${n.lbl}</div></div>`;
+  host.appendChild(d);
+  return d;
+});
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const START = 1.0, STEP = 1.0, END = START + STEP * RUN.nodes.length, TOTAL = 12.0;
+
+function centres() {
+  const base = host.getBoundingClientRect().left;
+  return els.map((e) => { const r = e.getBoundingClientRect(); return r.left - base + r.width / 2; });
+}
+const C = centres();
+
+// Deterministic: the capture script calls render(t) for every frame, so the
+// GIF is the same file however slow the machine that rendered it.
+window.render = function (t) {
+  const out = clamp((t - (TOTAL - 0.6)) / 0.6); // fade back to the start for the loop
+  const press = document.getElementById("press");
+  const p = clamp((t - 0.45) / 0.35);
+  press.style.transform = `scale(${1 - 0.14 * Math.sin(Math.PI * p)})`;
+  press.style.background = p > 0 && p < 1 ? "rgba(255,255,255,0.75)" : "";
+
+  els.forEach((e, i) => {
+    const a = START + i * STEP;
+    const local = (t - a) / STEP;
+    const active = local >= 0 && local < 1;
+    const seen = local >= 0;
+    const k = ease(local / 0.6);
+    const big = e.querySelector(".big");
+    big.textContent = seen ? Math.round(RUN.nodes[i].big * k).toLocaleString("en-US") : "—";
+    e.style.opacity = (seen ? 1 : 0.55) * (1 - out) + 0.55 * out;
+    e.style.transform = `translateY(${active ? -8 * Math.sin(Math.PI * clamp(local * 1.6)) : 0}px)`;
+    e.style.background = active ? "rgba(236,242,250,0.30)" : seen ? "rgba(236,242,250,0.16)" : "rgba(236,242,250,0.08)";
+    e.style.borderColor = active ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.18)";
+    const cost = e.querySelector(".cost");
+    if (cost) cost.style.opacity = seen ? clamp(local * 3) * (1 - out) : 0;
+    if (out > 0) big.textContent = out < 1 ? big.textContent : "—";
+  });
+
+  const run = clamp((t - START) / (END - START - 0.5));
+  const span = C[C.length - 1] - C[0];
+  const x = C[0] + span * run;
+  document.getElementById("dot").style.left = `${x}px`;
+  document.getElementById("dot").style.opacity = (t > START - 0.2 ? 1 : 0) * (1 - out);
+  document.getElementById("fill").style.width = `${Math.max(0, x - 70)}px`;
+  document.getElementById("fill").style.opacity = 1 - out;
+
+  const fin = ease((t - END) / 0.6) * (1 - out);
+  document.getElementById("bottom").style.opacity = 0.25 + 0.75 * fin;
+  const done = document.getElementById("done");
+  done.style.background = fin > 0.5 ? "rgba(159,240,196,0.85)" : "";
+  done.style.transform = `scale(${1 + 0.12 * Math.sin(Math.PI * clamp((t - END) / 0.5))})`;
+};
+window.DURATION = TOTAL;
+window.render(END + 1);
+</script>
+</body>
+</html>

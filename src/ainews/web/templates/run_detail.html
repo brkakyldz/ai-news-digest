@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {# One run, node by node (ADR 0022). The `runs` table above answers "what did
+     this cost"; this page answers the two questions that follow it - which node
+     took the time, and which node took the money - and it is the only screen in
+     the app that shows the pipeline as a pipeline.
+
+     It borrows the vocabulary of `/runs` rather than inventing one: the facts
+     strip is the shape of `advice__facts`, the steps sit in the page's own
+     table, and colour appears only on a failure. A run detail page that looked
+     like a different product would be a second design for the same machine.
+
+     How a step's span is drawn was the one open choice, settled by drawing the
+     alternatives: the duration and the share are one column, the bar drawn to
+     the share with the number on top of it. Two columns saying the same size
+     cost a sixth column on a table that was already overflowing at the note. #}
+  <section class="ph ph--back">
+    <h1>{{ t.run_heading }} <span class="num">{{ run.id[:8] }}</span></h1>
+    <a class="back" href="/runs?lang={{ language }}">{{ t.back_to_runs }}</a>
+  </section>
+
+  <section class="advice__facts advice__facts--solo">
+    <div>
+      <p class="unit__h">{{ t.col_time }}</p>
+      <p class="advice__n num">{{ run.started_at|stamp }}</p>
+      {# Colour on a failure only; `partial` is a finished run with a note
+         (see `_runs_table.html`). #}
+      <p class="advice__s{% if run.status == 'error' %} bad{% endif %}">
+        {{ t['status_' + run.status] }} · <span lang="en">{{ run.kind }}</span>
+      </p>
+    </div>
+    <div>
+      <p class="unit__h">{{ t.col_duration }}</p>
+      <p class="advice__n num">{{ run.duration_seconds|duration }}</p>
+      <p class="advice__s">{{ t.fact_stories }} {{ run.n_summarized }}</p>
+    </div>
+    <div>
+      <p class="unit__h">{{ t.col_cost }}</p>
+      <p class="advice__n num">{{ run.est_cost_usd|money }}</p>
+      <p class="advice__s">{{ t.fact_tokens }} {{ tokens|number }}</p>
+    </div>
+    {% if models %}
+    {# Which models wrote this bulletin. ADR 0020 made that a choice made at the
+       press and priced on screen, but nothing afterwards said which choice was
+       taken - `runs` has no column for it, and this is the first page that can
+       answer. The two lines align by position: the tier on top, the job it did
+       under it. #}
+    <div>
+      <p class="unit__h">{{ t.fact_models }}</p>
+      <p class="advice__n num">{{ models|map(attribute=1)|join(' · ') }}</p>
+      <p class="advice__s">{{ models|map(attribute=0)|join(' · ') }}</p>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    {# No table at all when there is nothing in it. Five empty column headings
+       over a sentence explaining that there are no steps is a table pretending
+       to have failed to load, rather than a run that predates the record. #}
+    {% if steps %}
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t.col_step }}</th><th>{{ t.col_flow }}</th>
+            <th>{{ t.col_duration }}</th>
+            <th>{{ t.col_cost }}</th><th>{{ t.col_note }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in steps %}
+          {% set s = row.step %}
+          <tr>
+            <td class="strong">{{ t['step_' + s.node] if ('step_' + s.node) in t else s.node }}</td>
+            {# The two counts are read through the node's own sentence: "in" and
+               "out" are different quantities at every node, and one pair of
+               column headings would have been wrong at five of the six. #}
+            <td>
+              {%- if s.n_in is not none -%}
+                {{ t['flow_' + s.node].format(a=s.n_in, b=s.n_out) if ('flow_' + s.node) in t
+                   else '%s → %s'|format(s.n_in, s.n_out) }}
+              {%- else -%}—{%- endif -%}
+            </td>
+            {# One column, one magnitude. The bar's denominator is the run's
+               wall clock and not the sum of the steps, so the widths
+               deliberately do not add up to full: what is missing is the
+               scheduling between supersteps, and it is worth seeing. #}
+            <td class="span num">
+              <span class="span__t"><i style="--w: {{ (row.share * 100)|round(1) }}%"></i><b>{{ row.span }}</b></span>
+            </td>
+            <td class="num">{{ s.est_cost_usd|money if s.est_cost_usd else '—' }}</td>
+            {# Written by the route, from a key the node recorded and the
+               numbers with it: the last English string on a Turkish page used
+               to live in this cell. Still the monospaced face - a feed's error
+               text and an exception's repr come through the same column
+               unchanged, because those were never written in a language. #}
+            <td class="raw{% if s.status == 'error' %} bad{% endif %}">{{ row.note }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="pb">{{ t.no_steps }}</p>
+    {% endif %}
+  </section>
+
+  {% if quality %}
+  {# What the press measured about the bulletin it published (PLAN-V2 5.5).
+     Here rather than only in `docs/evals.md`, because the record is written by
+     a command and this page is the one the person who pressed the button is
+     already looking at - a check that runs for free and is never seen is a
+     check that is not being used.
+
+     A bar per row on the impact meter's geometry but not its colours: those are
+     spoken for (ADR 0012), and this is a share rather than a state. Every bar
+     fills in the same direction, so a long bar is always the good answer. #}
+  <section class="panel">
+    <div class="ph">
+      <h2>{{ t.quality_heading }}</h2>
+      <span class="ph__s">{{ t.quality_lead }}</span>
+    </div>
+    <div class="pb">
+      <dl class="qual">
+        {% for row in quality %}
+        <div class="qual__r">
+          <dt>{{ row.label }}</dt>
+          <dd class="num">{{ row.value }}</dd>
+          <dd class="qual__b">{% if row.share is not none %}<i style="--w: {{ (row.share * 100)|round(1) }}%"></i>{% endif %}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if run.error %}
+  <section class="panel">
+    <div class="ph"><h2>{{ t.status_error }}</h2></div>
+    <ul class="pb fails">
+      {% for line in run.error.splitlines() %}<li class="raw">{{ line }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+{% endblock %}
